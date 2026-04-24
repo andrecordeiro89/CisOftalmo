@@ -16,7 +16,7 @@ export function Sidebar() {
       style={{ width: 'var(--sidebar-width)' }}
     >
       {/* Logo */}
-      <div className="flex items-center gap-2.5 px-5 py-5 border-b border-slate-700/60">
+      <div className="flex items-center gap-2.5 px-4 py-5 border-b border-slate-700/60">
         <div className="w-8 h-8 rounded-lg bg-brand-500 flex items-center justify-center shrink-0">
           <Eye size={16} className="text-white" />
         </div>
@@ -48,7 +48,7 @@ export function Sidebar() {
       </nav>
 
       {/* Footer */}
-      <div className="px-5 py-4 border-t border-slate-700/60">
+      <div className="px-4 py-4 border-t border-slate-700/60">
         <p className="text-slate-500 text-xs">v1.0 — Oftalmologia</p>
       </div>
     </aside>

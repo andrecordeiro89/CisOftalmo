@@ -4,7 +4,7 @@
 
 @layer base {
   :root {
-    --sidebar-width: 240px;
+    --sidebar-width: 200px;
     --header-height: 60px;
   }
 
