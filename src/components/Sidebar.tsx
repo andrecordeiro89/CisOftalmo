@@ -1,12 +1,13 @@
 import { NavLink } from 'react-router-dom'
-import { UserPlus, ClipboardList, Stethoscope, CalendarDays, Eye } from 'lucide-react'
+import { LayoutDashboard, UserPlus, ClipboardList, Stethoscope, CalendarDays, Eye } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 const nav = [
-  { to: '/recepcao',  label: 'Recepção',        icon: UserPlus       },
-  { to: '/triagem',   label: 'Triagem',          icon: ClipboardList  },
-  { to: '/consulta',  label: 'Consulta Médica',  icon: Stethoscope    },
-  { to: '/agendamento', label: 'Agendamento',    icon: CalendarDays   },
+  { to: '/paciente',    label: 'Paciente',         icon: UserPlus        },
+  { to: '/recepcao',    label: 'Recepção',         icon: LayoutDashboard },
+  { to: '/triagem',     label: 'Triagem',          icon: ClipboardList   },
+  { to: '/consulta',    label: 'Consulta Médica',  icon: Stethoscope     },
+  { to: '/agendamento', label: 'Agendamento',      icon: CalendarDays    },
 ]
 
 export function Sidebar() {

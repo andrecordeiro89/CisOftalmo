@@ -56,6 +56,7 @@
   .badge-red    { @apply badge bg-red-50 text-red-700; }
   .badge-slate  { @apply badge bg-slate-100 text-slate-600; }
   .badge-purple { @apply badge bg-purple-50 text-purple-700; }
+  .badge-teal   { @apply badge bg-teal-50 text-teal-700; }
 
   .status-dot {
     @apply inline-block w-2 h-2 rounded-full mr-1.5;

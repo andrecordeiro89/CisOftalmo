@@ -21,6 +21,7 @@ export type VisitStatus =
   | 'finalizado'
   | 'aguardando_agendamento'
   | 'agendado'
+  | 'presente_cirurgia'
 
 // ─── Patient ─────────────────────────────────────────────────────────────────
 
@@ -184,6 +185,7 @@ export const VISIT_STATUS_LABELS: Record<VisitStatus, string> = {
   finalizado: 'Finalizado',
   aguardando_agendamento: 'Aguardando Agendamento',
   agendado: 'Agendado',
+  presente_cirurgia: 'Presente — Cirurgia',
 }
 
 export const VISIT_STATUS_COLORS: Record<VisitStatus, string> = {
@@ -194,6 +196,7 @@ export const VISIT_STATUS_COLORS: Record<VisitStatus, string> = {
   finalizado: 'badge-green',
   aguardando_agendamento: 'badge-red',
   agendado: 'badge-green',
+  presente_cirurgia: 'badge-teal',
 }
 
 export const AV_OPTIONS = [

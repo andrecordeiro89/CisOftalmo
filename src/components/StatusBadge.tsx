@@ -14,6 +14,7 @@ const dotColors: Record<VisitStatus, string> = {
   finalizado:             'bg-emerald-400',
   aguardando_agendamento: 'bg-red-400',
   agendado:               'bg-emerald-400',
+  presente_cirurgia:      'bg-teal-400',
 }
 
 export function StatusBadge({ status, className }: StatusBadgeProps) {

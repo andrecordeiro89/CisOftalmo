@@ -1,60 +1,42 @@
 import { useState, useEffect, useMemo, Fragment } from 'react'
 import {
-  Search, UserCheck, ChevronDown, ChevronRight,
-  AlertTriangle, CheckCircle2, RefreshCw, Eye,
+  Search, ChevronDown, ChevronRight,
+  RefreshCw, Eye, Scissors, CheckCheck,
   Users, CalendarClock, Activity, CalendarCheck,
 } from 'lucide-react'
 import { PageLayout } from '@/components/PageLayout'
-import { DropZone } from '@/components/DropZone'
 import { StatusBadge } from '@/components/StatusBadge'
 import { useToast } from '@/lib/toast'
 import { supabase } from '@/lib/supabase'
-import { extractPatientFromPDF, formatCPF, formatDate } from '@/lib/pdfExtractor'
+import { formatCPF, formatDate } from '@/lib/pdfExtractor'
 import {
-  type Patient, type Visit, type VisitType, type OciSubtype,
+  type Patient, type Visit,
   VISIT_TYPE_LABELS, OCI_SUBTYPE_LABELS,
 } from '@/types'
-
-// ─── Visit type selector ──────────────────────────────────────────────────────
-
-const VISIT_TYPES: { value: VisitType; label: string }[] = [
-  { value: 'primeira_consulta', label: '1ª Consulta' },
-  { value: 'retorno',           label: 'Retorno' },
-  { value: 'yag_laser',         label: 'Yag Laser' },
-  { value: 'oci',               label: 'OCI' },
-  { value: 'exames_retina',     label: 'Exames de Retina' },
-]
-
-const OCI_SUBTYPES: { value: OciSubtype; label: string }[] = [
-  { value: 'avaliacao_0_8',         label: '0 a 8 anos' },
-  { value: 'avaliacao_9_mais',      label: '9+ anos' },
-  { value: 'retinopatia_diabetica', label: 'Retinopatia Diabética' },
-  { value: 'estrabismo',            label: 'Estrabismo' },
-]
 
 interface PatientWithVisit extends Patient {
   visits?: Visit[]
 }
 
-// ─── Component ───────────────────────────────────────────────────────────────
+interface SurgicalVisit extends Visit {
+  patient: Patient
+}
+
+type ActiveTab = 'pacientes' | 'cirurgico'
 
 export function Recepcao() {
   const { toast } = useToast()
 
-  const [extracting, setExtracting]   = useState(false)
-  const [extracted, setExtracted]     = useState<{
-    name: string; cpf: string; birthDate: string; motherName: string
-  } | null>(null)
-  const [existingPatient, setExistingPatient] = useState<Patient | null>(null)
-
-  const [visitType, setVisitType]     = useState<VisitType>('primeira_consulta')
-  const [ociSubtype, setOciSubtype]   = useState<OciSubtype>('avaliacao_0_8')
-  const [saving, setSaving]           = useState(false)
+  const [activeTab, setActiveTab]     = useState<ActiveTab>('pacientes')
 
   const [patients, setPatients]       = useState<PatientWithVisit[]>([])
   const [search, setSearch]           = useState('')
   const [loadingList, setLoadingList] = useState(true)
   const [expandedId, setExpandedId]   = useState<string | null>(null)
+
+  const [surgicalVisits, setSurgicalVisits]       = useState<SurgicalVisit[]>([])
+  const [loadingSurgical, setLoadingSurgical]     = useState(true)
+  const [markingPresent, setMarkingPresent]       = useState<string | null>(null)
 
   // ── Load patients ──────────────────────────────────────────────────────────
   const loadPatients = async () => {
@@ -72,7 +54,48 @@ export function Recepcao() {
     setLoadingList(false)
   }
 
-  useEffect(() => { loadPatients() }, [])
+  // ── Load surgical visits ───────────────────────────────────────────────────
+  const loadSurgical = async () => {
+    setLoadingSurgical(true)
+
+    const { data: visitsData, error: visitsError } = await supabase
+      .from('visits')
+      .select('*')
+      .in('status', ['aguardando_agendamento', 'presente_cirurgia'])
+      .order('created_at', { ascending: true })
+
+    if (visitsError) {
+      toast('Erro ao carregar pacientes cirúrgicos', 'error')
+      setLoadingSurgical(false)
+      return
+    }
+
+    if (!visitsData || visitsData.length === 0) {
+      setSurgicalVisits([])
+      setLoadingSurgical(false)
+      return
+    }
+
+    const patientIds = [...new Set(visitsData.map(v => v.patient_id))]
+    const { data: patientsData, error: patientsError } = await supabase
+      .from('patients')
+      .select('*')
+      .in('id', patientIds)
+
+    if (patientsError) {
+      toast('Erro ao carregar dados dos pacientes', 'error')
+      setLoadingSurgical(false)
+      return
+    }
+
+    const patientsMap = new Map((patientsData ?? []).map(p => [p.id, p]))
+    setSurgicalVisits(
+      visitsData.map(v => ({ ...v, patient: patientsMap.get(v.patient_id)! })) as SurgicalVisit[]
+    )
+    setLoadingSurgical(false)
+  }
+
+  useEffect(() => { loadPatients(); loadSurgical() }, [])
 
   // ── Stats ──────────────────────────────────────────────────────────────────
   const stats = useMemo(() => {
@@ -86,123 +109,46 @@ export function Recepcao() {
     }
   }, [patients])
 
-  // ── PDF handler ────────────────────────────────────────────────────────────
-  const handleFile = async (file: File) => {
-    setExtracting(true)
-    setExtracted(null)
-    setExistingPatient(null)
+  // ── Mark surgical patient as present ──────────────────────────────────────
+  const markPresent = async (visitId: string, patientName: string) => {
+    setMarkingPresent(visitId)
+    const { error } = await supabase
+      .from('visits')
+      .update({ status: 'presente_cirurgia' })
+      .eq('id', visitId)
 
-    try {
-      const data = await extractPatientFromPDF(file)
-      const result = {
-        name:       data.name       ?? '',
-        cpf:        data.cpf        ?? '',
-        birthDate:  data.birthDate  ?? '',
-        motherName: data.motherName ?? '',
-      }
-      setExtracted(result)
-
-      if (result.cpf) {
-        const { data: found } = await supabase
-          .from('patients')
-          .select('*')
-          .eq('cpf', result.cpf)
-          .maybeSingle()
-
-        if (found) {
-          setExistingPatient(found as Patient)
-          toast(`Paciente com CPF ${formatCPF(result.cpf)} já está cadastrado.`, 'info')
-        }
-      }
-    } catch {
-      toast('Não foi possível extrair os dados do PDF. Verifique o arquivo.', 'error')
-    }
-
-    setExtracting(false)
-  }
-
-  // ── Save new visit for existing patient ────────────────────────────────────
-  const addVisitToExistingPatient = async () => {
-    if (!existingPatient) return
-    setSaving(true)
-    const { error } = await supabase.from('visits').insert({
-      patient_id:  existingPatient.id,
-      visit_type:  visitType,
-      oci_subtype: visitType === 'oci' ? ociSubtype : null,
-      status:      'triagem',
-    })
     if (error) {
-      toast('Erro ao adicionar atendimento', 'error')
+      toast('Erro ao marcar presença', 'error')
     } else {
-      toast(`Novo atendimento adicionado para ${existingPatient.name}`, 'success')
-      setExtracted(null)
-      setExistingPatient(null)
-      loadPatients()
+      toast(`${patientName} marcado como presente para cirurgia`, 'success')
+      loadSurgical()
     }
-    setSaving(false)
+    setMarkingPresent(null)
   }
 
-  // ── Save new patient + visit ───────────────────────────────────────────────
-  const handleSave = async () => {
-    if (!extracted) return
-    if (!extracted.name || !extracted.cpf) {
-      toast('Nome e CPF são obrigatórios', 'error')
-      return
-    }
-    setSaving(true)
-
-    const { data: newPatient, error: pError } = await supabase
-      .from('patients')
-      .insert({
-        name:        extracted.name,
-        cpf:         extracted.cpf,
-        birth_date:  extracted.birthDate  || null,
-        mother_name: extracted.motherName || null,
-      })
-      .select()
-      .single()
-
-    if (pError) {
-      toast('Erro ao cadastrar paciente: ' + pError.message, 'error')
-      setSaving(false)
-      return
-    }
-
-    const { error: vError } = await supabase.from('visits').insert({
-      patient_id:  newPatient.id,
-      visit_type:  visitType,
-      oci_subtype: visitType === 'oci' ? ociSubtype : null,
-      status:      'triagem',
-    })
-
-    if (vError) {
-      toast('Paciente cadastrado, mas erro ao criar atendimento.', 'error')
-    } else {
-      toast(`${extracted.name} cadastrado com sucesso!`, 'success')
-      setExtracted(null)
-      loadPatients()
-    }
-    setSaving(false)
-  }
-
-  // ── Filtered list ──────────────────────────────────────────────────────────
   const filtered = patients.filter(p =>
     p.name.toLowerCase().includes(search.toLowerCase()) ||
     p.cpf.includes(search.replace(/\D/g, ''))
   )
 
-  // ── Render ─────────────────────────────────────────────────────────────────
+  const surgicalPending  = surgicalVisits.filter(v => v.status === 'aguardando_agendamento')
+  const surgicalPresente = surgicalVisits.filter(v => v.status === 'presente_cirurgia')
+
   return (
     <PageLayout
       title="Recepção"
-      subtitle="Cadastro de pacientes via PDF do sistema AVYX"
+      subtitle="Visão geral de pacientes e atendimentos"
       actions={
-        <button onClick={loadPatients} className="btn-ghost" title="Atualizar lista">
+        <button
+          onClick={() => { loadPatients(); loadSurgical() }}
+          className="btn-ghost"
+          title="Atualizar"
+        >
           <RefreshCw size={14} />
         </button>
       }
     >
-      {/* ── Stats bar ── */}
+      {/* Stats bar */}
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 mb-5">
         <StatCard icon={Users}         label="Pacientes cadastrados" value={stats.total}     color="blue"   loading={loadingList} />
         <StatCard icon={CalendarClock} label="Registrados hoje"      value={stats.newToday}  color="green"  loading={loadingList} />
@@ -210,148 +156,28 @@ export function Recepcao() {
         <StatCard icon={CalendarCheck} label="Agendados"             value={stats.scheduled} color="purple" loading={loadingList} />
       </div>
 
-      {/* ── Main grid ── */}
-      <div className="grid grid-cols-1 xl:grid-cols-[360px_1fr] gap-5">
+      {/* Patient card with tabs */}
+      <div className="card flex flex-col overflow-hidden">
 
-        {/* ── Left panel: upload + form ── */}
-        <div className="flex flex-col gap-4">
+        {/* Tab header */}
+        <div className="flex items-center border-b border-slate-100 px-1">
+          <TabBtn
+            label="Pacientes"
+            count={filtered.length}
+            active={activeTab === 'pacientes'}
+            onClick={() => setActiveTab('pacientes')}
+          />
+          <TabBtn
+            label="Cirúrgico"
+            count={surgicalVisits.length}
+            active={activeTab === 'cirurgico'}
+            onClick={() => setActiveTab('cirurgico')}
+            highlight={surgicalPending.length > 0}
+          />
 
-          {/* Upload */}
-          <div className="card p-4">
-            <p className="section-title mb-3">Importar ficha AVYX</p>
-            <DropZone
-              onFile={handleFile}
-              loading={extracting}
-              label="Arraste o PDF da recepção aqui"
-              hint="Arquivo PDF exportado do sistema AVYX"
-            />
-          </div>
-
-          {/* Extracted data preview */}
-          {extracted && (
-            <div className="card p-4 animate-slide-up">
-
-              {/* Duplicate warning / success */}
-              {existingPatient ? (
-                <div className="flex gap-2.5 p-3 rounded-lg bg-amber-50 border border-amber-200 mb-4">
-                  <AlertTriangle size={15} className="text-amber-600 shrink-0 mt-0.5" />
-                  <div className="text-sm">
-                    <p className="font-medium text-amber-800">Paciente já cadastrado</p>
-                    <p className="text-amber-700 mt-0.5 text-xs">
-                      {existingPatient.name} — CPF {formatCPF(existingPatient.cpf)}
-                    </p>
-                    <p className="text-amber-600 text-xs mt-1">
-                      Selecione o tipo de atendimento e clique em "Adicionar Atendimento".
-                    </p>
-                  </div>
-                </div>
-              ) : (
-                <div className="flex gap-2.5 p-3 rounded-lg bg-emerald-50 border border-emerald-200 mb-4">
-                  <CheckCircle2 size={15} className="text-emerald-600 shrink-0 mt-0.5" />
-                  <p className="text-sm text-emerald-800 font-medium">Dados extraídos com sucesso</p>
-                </div>
-              )}
-
-              {/* Patient fields */}
-              <div className="grid grid-cols-2 gap-2.5 mb-4">
-                <DataField label="Nome" value={extracted.name} span />
-                <DataField label="CPF" value={formatCPF(extracted.cpf)} />
-                <DataField label="Nascimento" value={extracted.birthDate ? formatDate(extracted.birthDate) : '—'} />
-                <DataField label="Nome da Mãe" value={extracted.motherName || '—'} span />
-              </div>
-
-              <div className="divider" />
-
-              {/* Visit type — 2 cols */}
-              <div className="mb-3">
-                <label className="label">Tipo de Atendimento</label>
-                <div className="grid grid-cols-2 gap-1.5">
-                  {VISIT_TYPES.map(({ value, label }) => (
-                    <label
-                      key={value}
-                      className={`flex items-center gap-2 px-2.5 py-2 rounded-lg border cursor-pointer transition-colors ${
-                        visitType === value
-                          ? 'border-brand-400 bg-brand-50'
-                          : 'border-slate-200 hover:border-slate-300 bg-white'
-                      }`}
-                    >
-                      <input
-                        type="radio"
-                        name="visit_type"
-                        value={value}
-                        checked={visitType === value}
-                        onChange={() => setVisitType(value)}
-                        className="accent-brand-600"
-                      />
-                      <span className={`text-xs leading-tight ${visitType === value ? 'text-brand-800 font-medium' : 'text-slate-700'}`}>
-                        {label}
-                      </span>
-                    </label>
-                  ))}
-                </div>
-              </div>
-
-              {/* OCI subtype — 2 cols */}
-              {visitType === 'oci' && (
-                <div className="mb-4 animate-fade-in">
-                  <label className="label">Subtipo OCI</label>
-                  <div className="grid grid-cols-2 gap-1.5">
-                    {OCI_SUBTYPES.map(({ value, label }) => (
-                      <label
-                        key={value}
-                        className={`flex items-center gap-2 px-2.5 py-2 rounded-lg border cursor-pointer transition-colors ${
-                          ociSubtype === value
-                            ? 'border-brand-400 bg-brand-50'
-                            : 'border-slate-200 hover:border-slate-300 bg-white'
-                        }`}
-                      >
-                        <input
-                          type="radio"
-                          name="oci_subtype"
-                          value={value}
-                          checked={ociSubtype === value}
-                          onChange={() => setOciSubtype(value)}
-                          className="accent-brand-600"
-                        />
-                        <span className={`text-xs leading-tight ${ociSubtype === value ? 'text-brand-800 font-medium' : 'text-slate-700'}`}>
-                          {label}
-                        </span>
-                      </label>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Action buttons */}
-              {existingPatient ? (
-                <div className="flex gap-2">
-                  <button onClick={addVisitToExistingPatient} disabled={saving} className="btn-primary flex-1">
-                    <UserCheck size={13} />
-                    {saving ? 'Salvando…' : 'Adicionar Atendimento'}
-                  </button>
-                  <button onClick={() => { setExtracted(null); setExistingPatient(null) }} className="btn-secondary">
-                    Cancelar
-                  </button>
-                </div>
-              ) : (
-                <button onClick={handleSave} disabled={saving} className="btn-primary w-full">
-                  <UserCheck size={13} />
-                  {saving ? 'Cadastrando…' : 'Cadastrar Paciente'}
-                </button>
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* ── Right panel: patient list ── */}
-        <div className="card flex flex-col overflow-hidden">
-          {/* Search header */}
-          <div className="flex items-center gap-3 px-5 py-3.5 border-b border-slate-100">
-            <p className="section-title flex-1">
-              Pacientes
-              <span className="ml-2 text-sm font-normal text-slate-400">({filtered.length})</span>
-            </p>
-            <div className="relative">
+          {/* Search — only shown on pacientes tab */}
+          {activeTab === 'pacientes' && (
+            <div className="relative ml-auto mr-3">
               <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
               <input
                 type="text"
@@ -361,9 +187,11 @@ export function Recepcao() {
                 className="input pl-8 w-56 text-sm h-8"
               />
             </div>
-          </div>
+          )}
+        </div>
 
-          {/* Table */}
+        {/* ── Pacientes tab ── */}
+        {activeTab === 'pacientes' && (
           <div className="flex-1 overflow-y-auto overflow-x-hidden scrollbar-thin">
             {loadingList ? (
               <div className="flex items-center justify-center py-16 text-slate-400">
@@ -405,7 +233,7 @@ export function Recepcao() {
                       (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
                     )
                     const latestVisit = sorted[0]
-                    const isExpanded = expandedId === patient.id
+                    const isExpanded  = expandedId === patient.id
 
                     return (
                       <Fragment key={patient.id}>
@@ -453,9 +281,121 @@ export function Recepcao() {
               </table>
             )}
           </div>
-        </div>
+        )}
+
+        {/* ── Cirúrgico tab ── */}
+        {activeTab === 'cirurgico' && (
+          <div className="flex-1 overflow-y-auto scrollbar-thin">
+            {loadingSurgical ? (
+              <div className="flex items-center justify-center py-16 text-slate-400">
+                <RefreshCw size={16} className="animate-spin mr-2" />
+                Carregando…
+              </div>
+            ) : surgicalVisits.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-16 text-slate-400 gap-2">
+                <Scissors size={26} className="opacity-30" />
+                <p className="text-sm">Nenhum paciente cirúrgico no momento</p>
+              </div>
+            ) : (
+              <table className="table-fixed w-full text-sm">
+                <colgroup>
+                  <col className="w-[30%]" />
+                  <col className="w-[16%]" />
+                  <col className="w-[14%]" />
+                  <col className="w-[18%]" />
+                  <col className="w-[22%]" />
+                </colgroup>
+                <thead>
+                  <tr className="text-left text-xs font-medium text-slate-500 uppercase tracking-wide bg-slate-50 border-b border-slate-100">
+                    <th className="px-5 py-2.5">Paciente</th>
+                    <th className="px-4 py-2.5">CPF</th>
+                    <th className="px-4 py-2.5">Encaminhado em</th>
+                    <th className="px-4 py-2.5">Status</th>
+                    <th className="px-4 py-2.5"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {surgicalVisits.map(visit => (
+                    <SurgicalRow
+                      key={visit.id}
+                      visit={visit}
+                      marking={markingPresent === visit.id}
+                      onMarkPresent={() => markPresent(visit.id, visit.patient.name)}
+                    />
+                  ))}
+                </tbody>
+              </table>
+            )}
+
+            {/* Summary footer */}
+            {surgicalVisits.length > 0 && (
+              <div className="flex items-center gap-4 px-5 py-3 border-t border-slate-100 bg-slate-50/60 text-xs text-slate-500">
+                <span className="flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-amber-400" />
+                  Aguardando: {surgicalPending.length}
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-teal-400" />
+                  Presente: {surgicalPresente.length}
+                </span>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </PageLayout>
+  )
+}
+
+// ── SurgicalRow ───────────────────────────────────────────────────────────────
+
+function SurgicalRow({
+  visit, marking, onMarkPresent,
+}: {
+  visit: SurgicalVisit
+  marking: boolean
+  onMarkPresent: () => void
+}) {
+  const isPresente = visit.status === 'presente_cirurgia'
+
+  return (
+    <tr className={`border-b border-slate-50 transition-colors ${isPresente ? 'bg-teal-50/40' : 'hover:bg-slate-50/70'}`}>
+      <td className="px-5 py-3 min-w-0">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <div className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 ${
+            isPresente ? 'bg-teal-100' : 'bg-amber-100'
+          }`}>
+            {isPresente
+              ? <CheckCheck size={13} className="text-teal-700" />
+              : <Scissors  size={13} className="text-amber-700" />
+            }
+          </div>
+          <span className="font-medium text-slate-800 truncate">{visit.patient.name}</span>
+        </div>
+      </td>
+      <td className="px-4 py-3 text-slate-500 font-mono text-xs">{formatCPF(visit.patient.cpf)}</td>
+      <td className="px-4 py-3 text-slate-500 text-xs">
+        {new Date(visit.created_at).toLocaleDateString('pt-BR')}
+      </td>
+      <td className="px-4 py-3">
+        <StatusBadge status={visit.status} />
+      </td>
+      <td className="px-4 py-3">
+        {!isPresente && (
+          <button
+            onClick={onMarkPresent}
+            disabled={marking}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-teal-600 hover:bg-teal-700 text-white rounded-lg transition-colors disabled:opacity-50"
+          >
+            <CheckCheck size={12} />
+            {marking ? 'Salvando…' : 'Marcar Presente'}
+          </button>
+        )}
+        {isPresente && (
+          <span className="text-xs text-teal-600 font-medium">Confirmado ✓</span>
+        )}
+      </td>
+    </tr>
   )
 }
 
@@ -505,6 +445,40 @@ function TableRow({
   )
 }
 
+// ── TabBtn ────────────────────────────────────────────────────────────────────
+
+function TabBtn({
+  label, count, active, onClick, highlight = false,
+}: {
+  label: string
+  count: number
+  active: boolean
+  onClick: () => void
+  highlight?: boolean
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`flex items-center gap-2 px-5 py-3.5 text-sm font-medium border-b-2 -mb-px transition-colors ${
+        active
+          ? 'border-brand-500 text-brand-700'
+          : 'border-transparent text-slate-500 hover:text-slate-700'
+      }`}
+    >
+      {label}
+      <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium ${
+        active
+          ? 'bg-brand-100 text-brand-700'
+          : highlight
+            ? 'bg-amber-100 text-amber-700'
+            : 'bg-slate-100 text-slate-500'
+      }`}>
+        {count}
+      </span>
+    </button>
+  )
+}
+
 // ── StatCard ──────────────────────────────────────────────────────────────────
 
 const COLOR_MAP = {
@@ -537,17 +511,6 @@ function StatCard({
           <p className={`text-xl font-semibold leading-tight ${c.value}`}>{value}</p>
         )}
       </div>
-    </div>
-  )
-}
-
-// ── DataField ─────────────────────────────────────────────────────────────────
-
-function DataField({ label, value, span }: { label: string; value: string; span?: boolean }) {
-  return (
-    <div className={span ? 'col-span-2' : ''}>
-      <p className="label">{label}</p>
-      <p className="text-sm font-medium text-slate-800 truncate">{value || '—'}</p>
     </div>
   )
 }
