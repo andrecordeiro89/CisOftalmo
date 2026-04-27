@@ -1,6 +1,8 @@
-import { useState, useEffect } from 'react'
-import { RefreshCw, Stethoscope, ChevronRight, CheckCircle2, Save, User } from 'lucide-react'
+import { useRef, useState, useEffect } from 'react'
+import { RefreshCw, Stethoscope, ChevronRight, CheckCircle2, Save, User, ArrowLeft, List } from 'lucide-react'
+import { CollapsibleSection } from '@/components/CollapsibleSection'
 import { PageLayout } from '@/components/PageLayout'
+import { MobileActionBar } from '@/components/MobileActionBar'
 import { StatusBadge } from '@/components/StatusBadge'
 import { useToast } from '@/lib/toast'
 import { supabase } from '@/lib/supabase'
@@ -11,6 +13,7 @@ interface VisitWithPatient extends Visit {
   patient: Patient
   triage?: Record<string, unknown>
 }
+type MobileView = 'fila' | 'form'
 
 interface ConsultaForm {
   biomicroscopy_od: string; biomicroscopy_oe: string
@@ -87,15 +90,6 @@ function Rad({label, checked, onChange}: {label: string; checked: boolean; onCha
   )
 }
 
-function Sec({title, children}: {title: string; children: React.ReactNode}) {
-  return (
-    <div>
-      <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-2">{title}</p>
-      {children}
-    </div>
-  )
-}
-
 function TriageTag({label, value}: {label: string; value: unknown}) {
   if (!value || (Array.isArray(value) && value.length === 0)) return null
   const display = Array.isArray(value) ? (value as string[]).join(', ') : String(value)
@@ -114,9 +108,35 @@ export function Consulta() {
   const [visits, setVisits] = useState<VisitWithPatient[]>([])
   const [loading, setLoading] = useState(true)
   const [selected, setSelected] = useState<VisitWithPatient | null>(null)
+  const [mobileView, setMobileView] = useState<MobileView>('fila')
+  const [sectionsOpen, setSectionsOpen] = useState(() => {
+    const isMobile =
+      typeof window !== 'undefined' &&
+      typeof window.matchMedia !== 'undefined' &&
+      window.matchMedia('(max-width: 640px)').matches
+
+    return {
+      triageSummary: !isMobile,
+      biomicroscopy: true,
+      fo: true,
+      tonometry: true,
+      orthoptic: !isMobile,
+      diagnostics: !isMobile,
+      conduct: true,
+      consent: true,
+    }
+  })
   const [form, setForm] = useState<ConsultaForm>(EMPTY_C)
   const [saving, setSaving] = useState(false)
   const [showSummary, setShowSummary] = useState(false)
+  const triageSummaryRef = useRef<HTMLDivElement | null>(null)
+  const biomicroscopyRef = useRef<HTMLDivElement | null>(null)
+  const foRef = useRef<HTMLDivElement | null>(null)
+  const tonometryRef = useRef<HTMLDivElement | null>(null)
+  const orthopticRef = useRef<HTMLDivElement | null>(null)
+  const diagnosticsRef = useRef<HTMLDivElement | null>(null)
+  const conductRef = useRef<HTMLDivElement | null>(null)
+  const consentRef = useRef<HTMLDivElement | null>(null)
 
   const load = async () => {
     setLoading(true)
@@ -142,6 +162,7 @@ export function Consulta() {
 
   const selectVisit = async (v: VisitWithPatient) => {
     setSelected(v); setForm(EMPTY_C); setShowSummary(false)
+    setMobileView('form')
     await supabase.from('visits').update({status: 'em_consulta'}).eq('id', v.id)
   }
 
@@ -198,14 +219,37 @@ export function Consulta() {
   const pending = visits.filter(v => v.status === 'aguardando_consulta')
   const inConsulta = visits.filter(v => v.status === 'em_consulta')
   const triage = selected?.triage as Record<string, unknown> | undefined
+  const toggleSection = (key: keyof typeof sectionsOpen) =>
+    setSectionsOpen(s => ({ ...s, [key]: !s[key] }))
+  const openAndScroll = (key: keyof typeof sectionsOpen, ref: React.RefObject<HTMLDivElement | null>) => {
+    setSectionsOpen(s => ({ ...s, [key]: true }))
+    requestAnimationFrame(() => {
+      setTimeout(() => {
+        ref.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      }, 60)
+    })
+  }
 
   return (
     <PageLayout title="Consulta Médica" subtitle="Evolução e conduta do atendimento"
-      actions={<button onClick={load} className="btn-ghost"><RefreshCw size={14} /></button>}>
-      <div className="flex gap-6 h-[calc(100vh-145px)]">
+      actions={
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setMobileView(v => v === 'fila' ? 'form' : 'fila')}
+            className="btn-ghost md:hidden"
+            disabled={mobileView === 'form' && !selected}
+            title="Alternar"
+          >
+            <List size={14} />
+            {mobileView === 'fila' ? 'Formulário' : 'Fila'}
+          </button>
+          <button onClick={load} className="btn-ghost" title="Atualizar"><RefreshCw size={14} /></button>
+        </div>
+      }>
+      <div className="flex flex-col md:flex-row gap-4 md:gap-6 md:h-[calc(100vh-145px)] min-h-0">
 
         {/* Queue */}
-        <div className="w-64 shrink-0 flex flex-col gap-3">
+        <div className={`w-full md:w-64 shrink-0 flex flex-col gap-3 ${mobileView === 'form' ? 'hidden md:flex' : ''}`}>
           <div className="card flex flex-col overflow-hidden flex-1">
             <div className="px-4 py-3 border-b border-slate-100 flex items-center gap-2 shrink-0">
               <span className="w-2 h-2 rounded-full bg-brand-400 shrink-0" />
@@ -244,18 +288,22 @@ export function Consulta() {
         </div>
 
         {/* Main panel */}
-        <div className="flex-1 flex flex-col card overflow-hidden">
+        <div className={`flex-1 flex flex-col card overflow-hidden min-h-0 ${mobileView === 'fila' ? 'hidden md:flex' : ''}`}>
           {!selected ? (
             <div className="flex flex-col items-center justify-center h-full text-slate-400 gap-3">
               <Stethoscope size={36} className="opacity-20" />
               <p className="text-slate-500 font-medium">Selecione um paciente para iniciar a consulta</p>
+              <button onClick={() => setMobileView('fila')} className="btn-secondary md:hidden">Ver fila</button>
             </div>
           ) : showSummary ? (
-            <ConsultaSummary form={form} patient={selected.patient} onClose={() => {setShowSummary(false); setSelected(null)}} />
+            <ConsultaSummary form={form} patient={selected.patient} onClose={() => {setShowSummary(false); setSelected(null); setMobileView('fila')}} />
           ) : (
             <>
               {/* Patient header */}
-              <div className="flex items-center gap-3 px-5 py-3.5 bg-slate-50 border-b border-slate-200 shrink-0">
+              <div className="flex items-center gap-2 px-4 sm:px-5 py-3.5 bg-slate-50 border-b border-slate-200 shrink-0">
+                <button onClick={() => setMobileView('fila')} className="btn-ghost p-2 md:hidden" aria-label="Voltar para fila">
+                  <ArrowLeft size={16} />
+                </button>
                 <div className="w-9 h-9 rounded-full bg-purple-100 flex items-center justify-center shrink-0">
                   <span className="font-semibold text-purple-700 text-sm">{selected.patient.name.charAt(0)}</span>
                 </div>
@@ -268,160 +316,264 @@ export function Consulta() {
                 <StatusBadge status={selected.status} />
               </div>
 
-              <div className="flex-1 overflow-auto scrollbar-thin p-5 flex flex-col gap-6">
+              <div className="flex-1 overflow-auto scrollbar-thin p-4 sm:p-5 pb-28 sm:pb-5 flex flex-col gap-6">
+                <div className="md:hidden -mt-2">
+                  <div className="flex gap-2 overflow-x-auto scrollbar-thin pb-2">
+                    {triage && (
+                      <button
+                        type="button"
+                        onClick={() => openAndScroll('triageSummary', triageSummaryRef)}
+                        className="shrink-0 px-3 py-2 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-medium min-h-[44px]"
+                      >
+                        Triagem
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => openAndScroll('biomicroscopy', biomicroscopyRef)}
+                      className="shrink-0 px-3 py-2 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-medium min-h-[44px]"
+                    >
+                      Bio
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => openAndScroll('fo', foRef)}
+                      className="shrink-0 px-3 py-2 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-medium min-h-[44px]"
+                    >
+                      FO
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => openAndScroll('tonometry', tonometryRef)}
+                      className="shrink-0 px-3 py-2 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-medium min-h-[44px]"
+                    >
+                      PIO
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => openAndScroll('orthoptic', orthopticRef)}
+                      className="shrink-0 px-3 py-2 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-medium min-h-[44px]"
+                    >
+                      Ortóptico
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => openAndScroll('diagnostics', diagnosticsRef)}
+                      className="shrink-0 px-3 py-2 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-medium min-h-[44px]"
+                    >
+                      Diagnóstico
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => openAndScroll('conduct', conductRef)}
+                      className="shrink-0 px-3 py-2 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-medium min-h-[44px]"
+                    >
+                      Conduta
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => openAndScroll('consent', consentRef)}
+                      className="shrink-0 px-3 py-2 rounded-full bg-emerald-50 hover:bg-emerald-100 text-emerald-800 text-xs font-medium min-h-[44px]"
+                    >
+                      Consentimento
+                    </button>
+                  </div>
+                </div>
 
                 {/* ── Triage summary (read-only) ── */}
                 {triage && (
-                  <div className="p-4 rounded-xl bg-slate-50 border border-slate-200">
-                    <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-3">Resumo da Triagem</p>
-                    <div className="grid grid-cols-2 gap-x-6">
-                      <TriageTag label="Motivo" value={triage.consultation_reason} />
-                      <TriageTag label="Queixas" value={triage.main_complaints} />
-                      <TriageTag label="Doenças" value={triage.systemic_diseases} />
-                      <TriageTag label="Medicamentos" value={triage.continuous_medications} />
-                      <TriageTag label="Alergia" value={triage.drug_allergy ? (triage.drug_allergy_description || 'Sim') : 'Não'} />
-                      <TriageTag label="Cirurgia prévia" value={triage.previous_eye_surgery ? 'Sim' : 'Não'} />
-                    </div>
-                    <div className="grid grid-cols-4 gap-2 mt-2">
-                      {[['AV OD CC', triage.av_od_cc],['AV OD SC', triage.av_od_sc],['AV OE CC', triage.av_oe_cc],['AV OE SC', triage.av_oe_sc]]
-                        .map(([l, v]) => v ? (
-                          <div key={l as string} className="px-2 py-1 rounded bg-white border border-slate-200 text-center">
-                            <p className="text-xs text-slate-400">{l as string}</p>
-                            <p className="text-sm font-semibold text-slate-800">{v as string}</p>
-                          </div>
-                        ) : null)}
-                    </div>
+                  <div ref={triageSummaryRef}>
+                    <CollapsibleSection
+                      title="Resumo da Triagem"
+                      open={sectionsOpen.triageSummary}
+                      onToggle={() => toggleSection('triageSummary')}
+                      className="bg-slate-50"
+                      headerClassName="border-b border-slate-200"
+                    >
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6">
+                        <TriageTag label="Motivo" value={triage.consultation_reason} />
+                        <TriageTag label="Queixas" value={triage.main_complaints} />
+                        <TriageTag label="Doenças" value={triage.systemic_diseases} />
+                        <TriageTag label="Medicamentos" value={triage.continuous_medications} />
+                        <TriageTag label="Alergia" value={triage.drug_allergy ? (triage.drug_allergy_description || 'Sim') : 'Não'} />
+                        <TriageTag label="Cirurgia prévia" value={triage.previous_eye_surgery ? 'Sim' : 'Não'} />
+                      </div>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-2">
+                        {[['AV OD CC', triage.av_od_cc],['AV OD SC', triage.av_od_sc],['AV OE CC', triage.av_oe_cc],['AV OE SC', triage.av_oe_sc]]
+                          .map(([l, v]) => v ? (
+                            <div key={l as string} className="px-2 py-1 rounded bg-white border border-slate-200 text-center">
+                              <p className="text-xs text-slate-400">{l as string}</p>
+                              <p className="text-sm font-semibold text-slate-800">{v as string}</p>
+                            </div>
+                          ) : null)}
+                      </div>
+                    </CollapsibleSection>
                   </div>
                 )}
 
                 {/* ── Medical evaluation ── */}
-                <Sec title="Biomicroscopia">
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="label">OD</label>
-                      <textarea className="input text-sm resize-none" rows={3} value={form.biomicroscopy_od}
-                        onChange={e => set('biomicroscopy_od', e.target.value)} placeholder="Biomicroscopia olho direito…" />
-                    </div>
-                    <div>
-                      <label className="label">OE</label>
-                      <textarea className="input text-sm resize-none" rows={3} value={form.biomicroscopy_oe}
-                        onChange={e => set('biomicroscopy_oe', e.target.value)} placeholder="Biomicroscopia olho esquerdo…" />
-                    </div>
-                  </div>
-                </Sec>
-
-                <Sec title="Fundo de Olho (FO/MR)">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <p className="label">OD</p>
-                      <div className="flex flex-col gap-1">
-                        {FO_OPTIONS.map(o => (
-                          <ChkBox key={o} label={o} checked={form.fo_od.includes(o)}
-                            onChange={() => toggleArr('fo_od', o)} />
-                        ))}
+                <div ref={biomicroscopyRef}>
+                  <CollapsibleSection
+                    title="Biomicroscopia"
+                    open={sectionsOpen.biomicroscopy}
+                    onToggle={() => toggleSection('biomicroscopy')}
+                  >
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="label">OD</label>
+                        <textarea className="input text-sm resize-none" rows={3} value={form.biomicroscopy_od}
+                          onChange={e => set('biomicroscopy_od', e.target.value)} placeholder="Biomicroscopia olho direito…" />
+                      </div>
+                      <div>
+                        <label className="label">OE</label>
+                        <textarea className="input text-sm resize-none" rows={3} value={form.biomicroscopy_oe}
+                          onChange={e => set('biomicroscopy_oe', e.target.value)} placeholder="Biomicroscopia olho esquerdo…" />
                       </div>
                     </div>
-                    <div>
-                      <p className="label">OE</p>
-                      <div className="flex flex-col gap-1">
-                        {FO_OPTIONS.map(o => (
-                          <ChkBox key={o} label={o} checked={form.fo_oe.includes(o)}
-                            onChange={() => toggleArr('fo_oe', o)} />
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                </Sec>
+                  </CollapsibleSection>
+                </div>
 
-                <Sec title="Tonometria (PIO)">
-                  <div className="grid grid-cols-2 gap-4">
-                    {[{side: 'OD', typeKey: 'tono_od_type', valKey: 'tono_od_value'} as const,
-                      {side: 'OE', typeKey: 'tono_oe_type', valKey: 'tono_oe_value'} as const,
-                    ].map(({side, typeKey, valKey}) => (
-                      <div key={side} className="p-3 rounded-xl border border-slate-200">
-                        <p className="label mb-2">{side}</p>
-                        <div className="flex flex-col gap-1 mb-2">
-                          {TONO_TYPES.map(t => (
-                            <Rad key={t} label={t} checked={form[typeKey] === t}
-                              onChange={() => set(typeKey, t)} />
+                <div ref={foRef}>
+                  <CollapsibleSection
+                    title="Fundo de Olho (FO/MR)"
+                    open={sectionsOpen.fo}
+                    onToggle={() => toggleSection('fo')}
+                  >
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div>
+                        <p className="label">OD</p>
+                        <div className="flex flex-col gap-1">
+                          {FO_OPTIONS.map(o => (
+                            <ChkBox key={o} label={o} checked={form.fo_od.includes(o)}
+                              onChange={() => toggleArr('fo_od', o)} />
                           ))}
                         </div>
-                        <input className="input text-sm" placeholder="Valor (mmHg)"
-                          value={form[valKey]} onChange={e => set(valKey, e.target.value)} />
                       </div>
-                    ))}
-                  </div>
-                </Sec>
+                      <div>
+                        <p className="label">OE</p>
+                        <div className="flex flex-col gap-1">
+                          {FO_OPTIONS.map(o => (
+                            <ChkBox key={o} label={o} checked={form.fo_oe.includes(o)}
+                              onChange={() => toggleArr('fo_oe', o)} />
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </CollapsibleSection>
+                </div>
 
-                <Sec title="Teste Ortóptico / Motilidade">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <p className="label">Motilidade Ocular</p>
-                      <div className="flex flex-col gap-1">
-                        {['Preservada','Restrita'].map(o => (
-                          <Rad key={o} label={o} checked={form.ortho_motility === o}
-                            onChange={() => set('ortho_motility', o)} />
-                        ))}
-                      </div>
+                <div ref={tonometryRef}>
+                  <CollapsibleSection
+                    title="Tonometria (PIO)"
+                    open={sectionsOpen.tonometry}
+                    onToggle={() => toggleSection('tonometry')}
+                  >
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      {[{side: 'OD', typeKey: 'tono_od_type', valKey: 'tono_od_value'} as const,
+                        {side: 'OE', typeKey: 'tono_oe_type', valKey: 'tono_oe_value'} as const,
+                      ].map(({side, typeKey, valKey}) => (
+                        <div key={side} className="p-3 rounded-xl border border-slate-200">
+                          <p className="label mb-2">{side}</p>
+                          <div className="flex flex-col gap-1 mb-2">
+                            {TONO_TYPES.map(t => (
+                              <Rad key={t} label={t} checked={form[typeKey] === t}
+                                onChange={() => set(typeKey, t)} />
+                            ))}
+                          </div>
+                          <input className="input text-sm" placeholder="Valor (mmHg)"
+                            value={form[valKey]} onChange={e => set(valKey, e.target.value)} />
+                        </div>
+                      ))}
                     </div>
-                    <div>
-                      <p className="label">Fusional</p>
-                      <div className="flex flex-col gap-1">
-                        {['Preservada','Alterada'].map(o => (
-                          <Rad key={o} label={o} checked={form.ortho_fusion === o}
-                            onChange={() => set('ortho_fusion', o)} />
-                        ))}
-                      </div>
-                    </div>
-                    <div>
-                      <p className="label">Reflexos Pupilares</p>
-                      <div className="flex flex-col gap-1">
-                        {['Preservados','Alterados'].map(o => (
-                          <Rad key={o} label={o} checked={form.ortho_pupils === o}
-                            onChange={() => set('ortho_pupils', o)} />
-                        ))}
-                      </div>
-                    </div>
-                    <div>
-                      <p className="label">Desvios Oculares</p>
-                      <input className="input text-sm" value={form.ortho_deviation}
-                        onChange={e => set('ortho_deviation', e.target.value)} placeholder="Se houver…" />
-                    </div>
-                    <div>
-                      <p className="label">Topografia (TOPO)</p>
-                      <div className="flex gap-2">
-                        {TOPOMEC.map(o => <Rad key={o} label={o} checked={form.topography === o} onChange={() => set('topography', o)} />)}
-                      </div>
-                    </div>
-                    <div>
-                      <p className="label">MEC</p>
-                      <div className="flex gap-2">
-                        {TOPOMEC.map(o => <Rad key={o} label={o} checked={form.mec === o} onChange={() => set('mec', o)} />)}
-                      </div>
-                    </div>
-                  </div>
-                </Sec>
+                  </CollapsibleSection>
+                </div>
 
-                <Sec title="Impressão Diagnóstica">
-                  <div className="grid grid-cols-3 gap-1.5 mb-3">
-                    {DIAGNOSTICS.map(d => (
-                      <ChkBox key={d} label={d} checked={form.diagnostics.includes(d)}
-                        onChange={() => toggleArr('diagnostics', d)} />
-                    ))}
-                  </div>
-                  {form.diagnostics.includes('Outra') && (
-                    <input className="input text-sm mb-2" placeholder="Outra diagnose…"
-                      value={form.other_diagnosis} onChange={e => set('other_diagnosis', e.target.value)} />
-                  )}
-                  <div>
-                    <label className="label">CID</label>
-                    <input className="input text-sm w-40" placeholder="Ex: H26.9"
-                      value={form.cid} onChange={e => set('cid', e.target.value)} />
-                  </div>
-                </Sec>
+                <div ref={orthopticRef}>
+                  <CollapsibleSection
+                    title="Teste Ortóptico / Motilidade"
+                    open={sectionsOpen.orthoptic}
+                    onToggle={() => toggleSection('orthoptic')}
+                  >
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div>
+                        <p className="label">Motilidade Ocular</p>
+                        <div className="flex flex-col gap-1">
+                          {['Preservada','Restrita'].map(o => (
+                            <Rad key={o} label={o} checked={form.ortho_motility === o}
+                              onChange={() => set('ortho_motility', o)} />
+                          ))}
+                        </div>
+                      </div>
+                      <div>
+                        <p className="label">Fusional</p>
+                        <div className="flex flex-col gap-1">
+                          {['Preservada','Alterada'].map(o => (
+                            <Rad key={o} label={o} checked={form.ortho_fusion === o}
+                              onChange={() => set('ortho_fusion', o)} />
+                          ))}
+                        </div>
+                      </div>
+                      <div>
+                        <p className="label">Reflexos Pupilares</p>
+                        <div className="flex flex-col gap-1">
+                          {['Preservados','Alterados'].map(o => (
+                            <Rad key={o} label={o} checked={form.ortho_pupils === o}
+                              onChange={() => set('ortho_pupils', o)} />
+                          ))}
+                        </div>
+                      </div>
+                      <div>
+                        <p className="label">Desvios Oculares</p>
+                        <input className="input text-sm" value={form.ortho_deviation}
+                          onChange={e => set('ortho_deviation', e.target.value)} placeholder="Se houver…" />
+                      </div>
+                      <div>
+                        <p className="label">Topografia (TOPO)</p>
+                        <div className="flex gap-2">
+                          {TOPOMEC.map(o => <Rad key={o} label={o} checked={form.topography === o} onChange={() => set('topography', o)} />)}
+                        </div>
+                      </div>
+                      <div>
+                        <p className="label">MEC</p>
+                        <div className="flex gap-2">
+                          {TOPOMEC.map(o => <Rad key={o} label={o} checked={form.mec === o} onChange={() => set('mec', o)} />)}
+                        </div>
+                      </div>
+                    </div>
+                  </CollapsibleSection>
+                </div>
 
-                <Sec title="Conduta">
-                  <div className="flex flex-col gap-3">
+                <div ref={diagnosticsRef}>
+                  <CollapsibleSection
+                    title="Impressão Diagnóstica"
+                    open={sectionsOpen.diagnostics}
+                    onToggle={() => toggleSection('diagnostics')}
+                  >
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-1.5 mb-3">
+                      {DIAGNOSTICS.map(d => (
+                        <ChkBox key={d} label={d} checked={form.diagnostics.includes(d)}
+                          onChange={() => toggleArr('diagnostics', d)} />
+                      ))}
+                    </div>
+                    {form.diagnostics.includes('Outra') && (
+                      <input className="input text-sm mb-2" placeholder="Outra diagnose…"
+                        value={form.other_diagnosis} onChange={e => set('other_diagnosis', e.target.value)} />
+                    )}
+                    <div>
+                      <label className="label">CID</label>
+                      <input className="input text-sm w-40" placeholder="Ex: H26.9"
+                        value={form.cid} onChange={e => set('cid', e.target.value)} />
+                    </div>
+                  </CollapsibleSection>
+                </div>
+
+                <div ref={conductRef}>
+                  <CollapsibleSection
+                    title="Conduta"
+                    open={sectionsOpen.conduct}
+                    onToggle={() => toggleSection('conduct')}
+                  >
+                    <div className="flex flex-col gap-3">
 
                     {/* Cataract */}
                     <div className="p-4 rounded-xl border border-slate-200">
@@ -488,13 +640,13 @@ export function Consulta() {
                     </div>
 
                     {/* Other conducts */}
-                    <div className="grid grid-cols-3 gap-2">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                       <ChkBox label="Óculos / Refração" checked={form.conduct_glasses} onChange={v => set('conduct_glasses', v)} />
                       <ChkBox label="Alta" checked={form.conduct_discharge} onChange={v => set('conduct_discharge', v)} />
                       <ChkBox label="Outras Condutas" checked={form.conduct_other} onChange={v => set('conduct_other', v)} />
                     </div>
 
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       {/* Return */}
                       <div className="p-3 rounded-xl border border-slate-200">
                         <ChkBox label="Retorno / Acompanhamento" checked={form.conduct_return} onChange={v => set('conduct_return', v)} />
@@ -516,19 +668,27 @@ export function Consulta() {
                       )}
                     </div>
                   </div>
-                </Sec>
+                  </CollapsibleSection>
+                </div>
 
                 {/* Consent */}
-                <div className="p-4 rounded-xl border border-slate-200 bg-emerald-50">
-                  <ChkBox
-                    label="Paciente entendeu e aceitou o diagnóstico e a terapêutica proposta, saindo do serviço com todas as dúvidas sanadas, ciente dos riscos e benefícios."
-                    checked={form.patient_consent}
-                    onChange={v => set('patient_consent', v)}
-                  />
+                <div ref={consentRef}>
+                  <CollapsibleSection
+                    title="Consentimento"
+                    open={sectionsOpen.consent}
+                    onToggle={() => toggleSection('consent')}
+                    className="bg-emerald-50 border-emerald-200"
+                  >
+                    <ChkBox
+                      label="Paciente entendeu e aceitou o diagnóstico e a terapêutica proposta, saindo do serviço com todas as dúvidas sanadas, ciente dos riscos e benefícios."
+                      checked={form.patient_consent}
+                      onChange={v => set('patient_consent', v)}
+                    />
+                  </CollapsibleSection>
                 </div>
 
                 {/* Save */}
-                <button onClick={handleSave} disabled={saving} className="btn-primary self-start">
+                <button onClick={handleSave} disabled={saving} className="btn-primary self-start hidden md:inline-flex">
                   <Save size={14} />
                   {saving ? 'Finalizando…' : 'Finalizar Consulta'}
                 </button>
@@ -537,6 +697,14 @@ export function Consulta() {
           )}
         </div>
       </div>
+      {selected && !showSummary && (
+        <MobileActionBar>
+          <button onClick={handleSave} disabled={saving} className="btn-primary w-full justify-center">
+            <Save size={14} />
+            {saving ? 'Finalizando…' : 'Finalizar Consulta'}
+          </button>
+        </MobileActionBar>
+      )}
     </PageLayout>
   )
 }

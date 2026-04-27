@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, Fragment } from 'react'
 import {
   Search, ChevronDown, ChevronRight,
   RefreshCw, Eye, Scissors, CheckCheck,
-  Users, CalendarClock, Activity, CalendarCheck,
+  CalendarClock, Activity, CalendarCheck,
 } from 'lucide-react'
 import { PageLayout } from '@/components/PageLayout'
 import { StatusBadge } from '@/components/StatusBadge'
@@ -102,7 +102,6 @@ export function Recepcao() {
     const allVisits = patients.flatMap(p => p.visits ?? [])
     const todayStr  = new Date().toDateString()
     return {
-      total:     patients.length,
       newToday:  patients.filter(p => new Date(p.created_at).toDateString() === todayStr).length,
       active:    allVisits.filter(v => ['recepcao','triagem','aguardando_consulta','em_consulta','aguardando_agendamento'].includes(v.status)).length,
       scheduled: allVisits.filter(v => v.status === 'agendado').length,
@@ -149,8 +148,7 @@ export function Recepcao() {
       }
     >
       {/* Stats bar */}
-      <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 mb-5">
-        <StatCard icon={Users}         label="Pacientes cadastrados" value={stats.total}     color="blue"   loading={loadingList} />
+      <div className="grid grid-cols-2 xl:grid-cols-3 gap-3 mb-5">
         <StatCard icon={CalendarClock} label="Registrados hoje"      value={stats.newToday}  color="green"  loading={loadingList} />
         <StatCard icon={Activity}      label="Em atendimento"        value={stats.active}    color="amber"  loading={loadingList} />
         <StatCard icon={CalendarCheck} label="Agendados"             value={stats.scheduled} color="purple" loading={loadingList} />
@@ -160,7 +158,7 @@ export function Recepcao() {
       <div className="card flex flex-col overflow-hidden">
 
         {/* Tab header */}
-        <div className="flex items-center border-b border-slate-100 px-1">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center border-b border-slate-100 px-1 py-1 sm:py-0">
           <TabBtn
             label="Pacientes"
             count={filtered.length}
@@ -177,14 +175,14 @@ export function Recepcao() {
 
           {/* Search — only shown on pacientes tab */}
           {activeTab === 'pacientes' && (
-            <div className="relative ml-auto mr-3">
+            <div className="relative sm:ml-auto sm:mr-3 px-3 sm:px-0">
               <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
               <input
                 type="text"
                 placeholder="Buscar por nome ou CPF…"
                 value={search}
                 onChange={e => setSearch(e.target.value)}
-                className="input pl-8 w-56 text-sm h-8"
+                className="input pl-8 w-full sm:w-56 text-sm h-10 sm:h-8"
               />
             </div>
           )}
@@ -206,79 +204,157 @@ export function Recepcao() {
                 </p>
               </div>
             ) : (
-              <table className="table-fixed w-full text-sm">
-                <colgroup>
-                  <col className="w-[32%]" />
-                  <col className="w-[16%]" />
-                  <col className="w-[12%]" />
-                  <col className="w-[22%]" />
-                  <col className="w-[12%]" />
-                  <col className="w-[4%]" />
-                  <col className="w-8" />
-                </colgroup>
-                <thead>
-                  <tr className="text-left text-xs font-medium text-slate-500 uppercase tracking-wide bg-slate-50 border-b border-slate-100">
-                    <th className="px-5 py-2.5">Paciente</th>
-                    <th className="px-4 py-2.5">CPF</th>
-                    <th className="px-4 py-2.5">Nascimento</th>
-                    <th className="px-4 py-2.5">Último atendimento</th>
-                    <th className="px-4 py-2.5">Status</th>
-                    <th className="px-4 py-2.5 text-center">Nº</th>
-                    <th className="px-3 py-2.5"></th>
-                  </tr>
-                </thead>
-                <tbody>
+              <>
+                <div className="sm:hidden p-3 flex flex-col gap-2">
                   {filtered.map(patient => {
                     const sorted = [...(patient.visits ?? [])].sort(
                       (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
                     )
                     const latestVisit = sorted[0]
                     const isExpanded  = expandedId === patient.id
-
                     return (
-                      <Fragment key={patient.id}>
-                        <TableRow
-                          patient={patient}
-                          latestVisit={latestVisit}
-                          visitCount={sorted.length}
-                          expanded={isExpanded}
-                          onToggle={() => setExpandedId(isExpanded ? null : patient.id)}
-                        />
-                        {isExpanded && sorted.length > 0 && (
-                          <tr className="bg-slate-50/80">
-                            <td colSpan={7} className="px-5 py-3">
-                              <p className="text-xs font-medium text-slate-400 uppercase tracking-wide mb-2">
-                                Histórico de Atendimentos
+                      <div key={patient.id} className="rounded-xl border border-slate-200 bg-white overflow-hidden">
+                        <button
+                          onClick={() => setExpandedId(isExpanded ? null : patient.id)}
+                          className="w-full text-left px-4 py-3 flex items-start gap-3"
+                        >
+                          <div className="w-10 h-10 rounded-full bg-brand-100 flex items-center justify-center shrink-0">
+                            <span className="text-sm font-semibold text-brand-700">
+                              {patient.name.charAt(0).toUpperCase()}
+                            </span>
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-start justify-between gap-2">
+                              <p className="font-semibold text-slate-800 truncate">{patient.name}</p>
+                              {latestVisit ? <StatusBadge status={latestVisit.status} /> : <span className="badge-slate">—</span>}
+                            </div>
+                            <p className="text-xs text-slate-500 mt-1">
+                              CPF <span className="font-mono">{formatCPF(patient.cpf)}</span>
+                              {patient.birth_date ? ` · Nasc ${formatDate(patient.birth_date)}` : ''}
+                            </p>
+                            <div className="flex items-center justify-between gap-2 mt-2">
+                              <p className="text-xs text-slate-600 truncate">
+                                {latestVisit ? VISIT_TYPE_LABELS[latestVisit.visit_type] : 'Sem atendimento'}
                               </p>
-                              <div className="flex flex-col gap-1.5">
-                                {sorted.map(visit => (
-                                  <div
-                                    key={visit.id}
-                                    className="flex items-center gap-3 px-3 py-2 rounded-lg bg-white border border-slate-100"
-                                  >
-                                    <span className="text-xs text-slate-400 w-20 shrink-0">
-                                      {new Date(visit.created_at).toLocaleDateString('pt-BR')}
-                                    </span>
-                                    <span className="text-xs font-medium text-slate-700 flex-1">
-                                      {VISIT_TYPE_LABELS[visit.visit_type]}
-                                      {visit.oci_subtype && (
-                                        <span className="text-slate-400 ml-1">
-                                          — {OCI_SUBTYPE_LABELS[visit.oci_subtype]}
-                                        </span>
-                                      )}
-                                    </span>
-                                    <StatusBadge status={visit.status} />
-                                  </div>
-                                ))}
+                              <div className="flex items-center gap-2 text-slate-400">
+                                <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-slate-100 text-slate-600 text-xs font-medium">
+                                  {sorted.length}
+                                </span>
+                                {isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
                               </div>
-                            </td>
-                          </tr>
+                            </div>
+                          </div>
+                        </button>
+
+                        {isExpanded && sorted.length > 0 && (
+                          <div className="px-4 pb-4">
+                            <p className="text-xs font-medium text-slate-400 uppercase tracking-wide mb-2">
+                              Histórico de Atendimentos
+                            </p>
+                            <div className="flex flex-col gap-1.5">
+                              {sorted.map(visit => (
+                                <div
+                                  key={visit.id}
+                                  className="flex items-center gap-3 px-3 py-2 rounded-lg bg-slate-50 border border-slate-200"
+                                >
+                                  <span className="text-xs text-slate-500 w-20 shrink-0">
+                                    {new Date(visit.created_at).toLocaleDateString('pt-BR')}
+                                  </span>
+                                  <span className="text-xs font-medium text-slate-700 flex-1">
+                                    {VISIT_TYPE_LABELS[visit.visit_type]}
+                                    {visit.oci_subtype && (
+                                      <span className="text-slate-400 ml-1">
+                                        — {OCI_SUBTYPE_LABELS[visit.oci_subtype]}
+                                      </span>
+                                    )}
+                                  </span>
+                                  <StatusBadge status={visit.status} />
+                                </div>
+                              ))}
+                            </div>
+                          </div>
                         )}
-                      </Fragment>
+                      </div>
                     )
                   })}
-                </tbody>
-              </table>
+                </div>
+
+                <div className="hidden sm:block overflow-x-auto">
+                  <table className="table-fixed w-full text-sm min-w-[880px]">
+                    <colgroup>
+                      <col className="w-[32%]" />
+                      <col className="w-[16%]" />
+                      <col className="w-[12%]" />
+                      <col className="w-[22%]" />
+                      <col className="w-[12%]" />
+                      <col className="w-[4%]" />
+                      <col className="w-8" />
+                    </colgroup>
+                    <thead>
+                      <tr className="text-left text-xs font-medium text-slate-500 uppercase tracking-wide bg-slate-50 border-b border-slate-100">
+                        <th className="px-5 py-2.5">Paciente</th>
+                        <th className="px-4 py-2.5">CPF</th>
+                        <th className="px-4 py-2.5">Nascimento</th>
+                        <th className="px-4 py-2.5">Último atendimento</th>
+                        <th className="px-4 py-2.5">Status</th>
+                        <th className="px-4 py-2.5 text-center">Nº</th>
+                        <th className="px-3 py-2.5"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filtered.map(patient => {
+                        const sorted = [...(patient.visits ?? [])].sort(
+                          (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+                        )
+                        const latestVisit = sorted[0]
+                        const isExpanded  = expandedId === patient.id
+
+                        return (
+                          <Fragment key={patient.id}>
+                            <TableRow
+                              patient={patient}
+                              latestVisit={latestVisit}
+                              visitCount={sorted.length}
+                              expanded={isExpanded}
+                              onToggle={() => setExpandedId(isExpanded ? null : patient.id)}
+                            />
+                            {isExpanded && sorted.length > 0 && (
+                              <tr className="bg-slate-50/80">
+                                <td colSpan={7} className="px-5 py-3">
+                                  <p className="text-xs font-medium text-slate-400 uppercase tracking-wide mb-2">
+                                    Histórico de Atendimentos
+                                  </p>
+                                  <div className="flex flex-col gap-1.5">
+                                    {sorted.map(visit => (
+                                      <div
+                                        key={visit.id}
+                                        className="flex items-center gap-3 px-3 py-2 rounded-lg bg-white border border-slate-100"
+                                      >
+                                        <span className="text-xs text-slate-400 w-20 shrink-0">
+                                          {new Date(visit.created_at).toLocaleDateString('pt-BR')}
+                                        </span>
+                                        <span className="text-xs font-medium text-slate-700 flex-1">
+                                          {VISIT_TYPE_LABELS[visit.visit_type]}
+                                          {visit.oci_subtype && (
+                                            <span className="text-slate-400 ml-1">
+                                              — {OCI_SUBTYPE_LABELS[visit.oci_subtype]}
+                                            </span>
+                                          )}
+                                        </span>
+                                        <StatusBadge status={visit.status} />
+                                      </div>
+                                    ))}
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
+                          </Fragment>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </>
             )}
           </div>
         )}
@@ -297,34 +373,84 @@ export function Recepcao() {
                 <p className="text-sm">Nenhum paciente cirúrgico no momento</p>
               </div>
             ) : (
-              <table className="table-fixed w-full text-sm">
-                <colgroup>
-                  <col className="w-[30%]" />
-                  <col className="w-[16%]" />
-                  <col className="w-[14%]" />
-                  <col className="w-[18%]" />
-                  <col className="w-[22%]" />
-                </colgroup>
-                <thead>
-                  <tr className="text-left text-xs font-medium text-slate-500 uppercase tracking-wide bg-slate-50 border-b border-slate-100">
-                    <th className="px-5 py-2.5">Paciente</th>
-                    <th className="px-4 py-2.5">CPF</th>
-                    <th className="px-4 py-2.5">Encaminhado em</th>
-                    <th className="px-4 py-2.5">Status</th>
-                    <th className="px-4 py-2.5"></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {surgicalVisits.map(visit => (
-                    <SurgicalRow
-                      key={visit.id}
-                      visit={visit}
-                      marking={markingPresent === visit.id}
-                      onMarkPresent={() => markPresent(visit.id, visit.patient.name)}
-                    />
-                  ))}
-                </tbody>
-              </table>
+              <>
+                <div className="sm:hidden p-3 flex flex-col gap-2">
+                  {surgicalVisits.map(visit => {
+                    const isPresente = visit.status === 'presente_cirurgia'
+                    return (
+                      <div key={visit.id} className={`rounded-xl border overflow-hidden ${
+                        isPresente ? 'border-teal-200 bg-teal-50/30' : 'border-slate-200 bg-white'
+                      }`}>
+                        <div className="px-4 py-3 flex items-start gap-3">
+                          <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${
+                            isPresente ? 'bg-teal-100' : 'bg-amber-100'
+                          }`}>
+                            {isPresente
+                              ? <CheckCheck size={16} className="text-teal-700" />
+                              : <Scissors size={16} className="text-amber-700" />
+                            }
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-start justify-between gap-2">
+                              <p className="font-semibold text-slate-800 truncate">{visit.patient.name}</p>
+                              <StatusBadge status={visit.status} />
+                            </div>
+                            <p className="text-xs text-slate-500 mt-1">
+                              CPF <span className="font-mono">{formatCPF(visit.patient.cpf)}</span>
+                            </p>
+                            <p className="text-xs text-slate-500 mt-1">
+                              Encaminhado em {new Date(visit.created_at).toLocaleDateString('pt-BR')}
+                            </p>
+                          </div>
+                        </div>
+                        {!isPresente && (
+                          <div className="px-4 pb-4">
+                            <button
+                              onClick={() => markPresent(visit.id, visit.patient.name)}
+                              disabled={markingPresent === visit.id}
+                              className="w-full inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium bg-teal-600 hover:bg-teal-700 text-white rounded-lg transition-colors disabled:opacity-50"
+                            >
+                              <CheckCheck size={14} />
+                              {markingPresent === visit.id ? 'Salvando…' : 'Marcar Presente'}
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+
+                <div className="hidden sm:block overflow-x-auto">
+                  <table className="table-fixed w-full text-sm min-w-[760px]">
+                    <colgroup>
+                      <col className="w-[30%]" />
+                      <col className="w-[16%]" />
+                      <col className="w-[14%]" />
+                      <col className="w-[18%]" />
+                      <col className="w-[22%]" />
+                    </colgroup>
+                    <thead>
+                      <tr className="text-left text-xs font-medium text-slate-500 uppercase tracking-wide bg-slate-50 border-b border-slate-100">
+                        <th className="px-5 py-2.5">Paciente</th>
+                        <th className="px-4 py-2.5">CPF</th>
+                        <th className="px-4 py-2.5">Encaminhado em</th>
+                        <th className="px-4 py-2.5">Status</th>
+                        <th className="px-4 py-2.5"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {surgicalVisits.map(visit => (
+                        <SurgicalRow
+                          key={visit.id}
+                          visit={visit}
+                          marking={markingPresent === visit.id}
+                          onMarkPresent={() => markPresent(visit.id, visit.patient.name)}
+                        />
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
             )}
 
             {/* Summary footer */}

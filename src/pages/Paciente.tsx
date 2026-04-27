@@ -168,7 +168,7 @@ export function Paciente() {
               </div>
             )}
 
-            <div className="grid grid-cols-2 gap-2.5 mb-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 mb-4">
               <DataField label="Nome" value={extracted.name} span />
               <DataField label="CPF" value={formatCPF(extracted.cpf)} />
               <DataField label="Nascimento" value={extracted.birthDate ? formatDate(extracted.birthDate) : '—'} />
@@ -179,7 +179,7 @@ export function Paciente() {
 
             <div className="mb-3">
               <label className="label">Tipo de Atendimento</label>
-              <div className="grid grid-cols-2 gap-1.5">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
                 {VISIT_TYPES.map(({ value, label }) => (
                   <label
                     key={value}
@@ -208,7 +208,7 @@ export function Paciente() {
             {visitType === 'oci' && (
               <div className="mb-4 animate-fade-in">
                 <label className="label">Subtipo OCI</label>
-                <div className="grid grid-cols-2 gap-1.5">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
                   {OCI_SUBTYPES.map(({ value, label }) => (
                     <label
                       key={value}

@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
 import {
   ClipboardList, ChevronRight, CheckCircle2,
-  RefreshCw, User, Save
+  RefreshCw, User, Save, ArrowLeft, List
 } from 'lucide-react'
+import { CollapsibleSection } from '@/components/CollapsibleSection'
 import { PageLayout } from '@/components/PageLayout'
 import { StatusBadge } from '@/components/StatusBadge'
 import { useToast } from '@/lib/toast'
@@ -12,6 +13,7 @@ import { type Visit, type Patient, AV_OPTIONS } from '@/types'
 
 interface VisitWithPatient extends Visit { patient: Patient }
 type Tab = 'motivo' | 'anamnese' | 'exames' | 'resumo'
+type MobileView = 'fila' | 'form'
 
 interface TriagemForm {
   consultation_reason: string; main_complaints: string[]; other_complaint: string
@@ -144,7 +146,21 @@ export function Triagem() {
   const [visits, setVisits] = useState<VisitWithPatient[]>([])
   const [loading, setLoading] = useState(true)
   const [selected, setSelected] = useState<VisitWithPatient | null>(null)
+  const [mobileView, setMobileView] = useState<MobileView>('fila')
   const [tab, setTab] = useState<Tab>('motivo')
+  const [examSectionsOpen, setExamSectionsOpen] = useState(() => {
+    const isMobile =
+      typeof window !== 'undefined' &&
+      typeof window.matchMedia !== 'undefined' &&
+      window.matchMedia('(max-width: 640px)').matches
+
+    return {
+      av: true,
+      autorefracao: !isMobile,
+      biometria: !isMobile,
+      observacoes: !isMobile,
+    }
+  })
   const [form, setForm] = useState<TriagemForm>(EMPTY)
   const [saving, setSaving] = useState(false)
 
@@ -169,6 +185,8 @@ export function Triagem() {
     const arr = form[key] as string[]
     set(key, arr.includes(item) ? arr.filter(x => x !== item) : [...arr, item])
   }
+  const toggleExamSection = (key: keyof typeof examSectionsOpen) =>
+    setExamSectionsOpen(s => ({ ...s, [key]: !s[key] }))
 
   const handleSave = async () => {
     if (!selected) return
@@ -205,11 +223,11 @@ export function Triagem() {
 
     await supabase.from('visits').update({status: 'aguardando_consulta'}).eq('id', selected.id)
     toast(`Triagem de ${selected.patient.name} salva!`, 'success')
-    setSelected(null); setForm(EMPTY); setTab('motivo'); load()
+    setSelected(null); setForm(EMPTY); setTab('motivo'); setMobileView('fila'); load()
     setSaving(false)
   }
 
-  const select = (v: VisitWithPatient) => { setSelected(v); setForm(EMPTY); setTab('motivo') }
+  const select = (v: VisitWithPatient) => { setSelected(v); setForm(EMPTY); setTab('motivo'); setMobileView('form') }
 
   const pending = visits.filter(v => v.status === 'triagem')
   const triaged = visits.filter(v => v.status === 'aguardando_consulta')
@@ -217,11 +235,24 @@ export function Triagem() {
 
   return (
     <PageLayout title="Triagem" subtitle="Coleta de dados clínicos pré-consulta"
-      actions={<button onClick={load} className="btn-ghost"><RefreshCw size={14} /></button>}>
-      <div className="flex gap-6 h-[calc(100vh-145px)]">
+      actions={
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setMobileView(v => v === 'fila' ? 'form' : 'fila')}
+            className="btn-ghost md:hidden"
+            disabled={mobileView === 'form' && !selected}
+            title="Alternar"
+          >
+            <List size={14} />
+            {mobileView === 'fila' ? 'Formulário' : 'Fila'}
+          </button>
+          <button onClick={load} className="btn-ghost" title="Atualizar"><RefreshCw size={14} /></button>
+        </div>
+      }>
+      <div className="flex flex-col md:flex-row gap-4 md:gap-6 md:h-[calc(100vh-145px)] min-h-0">
 
         {/* Queue */}
-        <div className="w-64 shrink-0 flex flex-col gap-3">
+        <div className={`w-full md:w-64 shrink-0 flex flex-col gap-3 ${mobileView === 'form' ? 'hidden md:flex' : ''}`}>
           <div className="card flex flex-col overflow-hidden flex-1">
             <div className="px-4 py-3 border-b border-slate-100 flex items-center gap-2 shrink-0">
               <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0" />
@@ -260,16 +291,20 @@ export function Triagem() {
         </div>
 
         {/* Form panel */}
-        <div className="flex-1 flex flex-col card overflow-hidden">
+        <div className={`flex-1 flex flex-col card overflow-hidden min-h-0 ${mobileView === 'fila' ? 'hidden md:flex' : ''}`}>
           {!selected ? (
             <div className="flex flex-col items-center justify-center h-full text-slate-400 gap-3">
               <ClipboardList size={36} className="opacity-20" />
               <p className="text-slate-500 font-medium">Selecione um paciente para iniciar a triagem</p>
+              <button onClick={() => setMobileView('fila')} className="btn-secondary md:hidden">Ver fila</button>
             </div>
           ) : (
             <>
               {/* Patient header */}
-              <div className="flex items-center gap-3 px-5 py-3.5 bg-slate-50 border-b border-slate-200 shrink-0">
+              <div className="flex items-center gap-2 px-4 sm:px-5 py-3.5 bg-slate-50 border-b border-slate-200 shrink-0">
+                <button onClick={() => setMobileView('fila')} className="btn-ghost p-2 md:hidden" aria-label="Voltar para fila">
+                  <ArrowLeft size={16} />
+                </button>
                 <div className="w-9 h-9 rounded-full bg-brand-100 flex items-center justify-center shrink-0">
                   <span className="font-semibold text-brand-700 text-sm">{selected.patient.name.charAt(0)}</span>
                 </div>
@@ -284,7 +319,7 @@ export function Triagem() {
               </div>
 
               {/* Tabs */}
-              <div className="flex border-b border-slate-200 px-5 shrink-0 overflow-x-auto">
+              <div className="flex border-b border-slate-200 px-4 sm:px-5 shrink-0 overflow-x-auto">
                 {TABS.map((t, i) => (
                   <button key={t.id} onClick={() => setTab(t.id)}
                     className={`px-3 py-3 text-xs font-medium border-b-2 whitespace-nowrap transition-colors -mb-px ${
@@ -296,13 +331,36 @@ export function Triagem() {
               </div>
 
               {/* Content */}
-              <div className="flex-1 overflow-auto scrollbar-thin p-5">
+              <div className="flex-1 overflow-auto scrollbar-thin p-4 sm:p-5">
+                <div className="md:hidden -mt-1 mb-4">
+                  <div className="flex gap-2 overflow-x-auto scrollbar-thin pb-2">
+                    {[
+                      { id: 'motivo' as const, label: 'Motivo' },
+                      { id: 'anamnese' as const, label: 'Anamnese' },
+                      { id: 'exames' as const, label: 'Exames' },
+                      { id: 'resumo' as const, label: 'Resumo' },
+                    ].map(t => (
+                      <button
+                        key={t.id}
+                        type="button"
+                        onClick={() => setTab(t.id)}
+                        className={`shrink-0 px-3 py-2 rounded-full text-xs font-medium min-h-[44px] transition-colors ${
+                          tab === t.id
+                            ? 'bg-brand-600 text-white'
+                            : 'bg-slate-100 hover:bg-slate-200 text-slate-700'
+                        }`}
+                      >
+                        {t.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
 
                 {/* TAB 1 */}
                 {tab === 'motivo' && (
                   <div className="flex flex-col gap-5 max-w-2xl">
                     <Sec title="Motivo da Consulta">
-                      <div className="grid grid-cols-2 gap-1.5">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
                         {REASONS.map(r => (
                           <RadItem key={r} label={r} checked={form.consultation_reason === r}
                             onChange={() => set('consultation_reason', r)} />
@@ -316,7 +374,7 @@ export function Triagem() {
                       )}
                     </Sec>
                     <Sec title="Queixas Principais (múltipla escolha)">
-                      <div className="grid grid-cols-2 gap-1.5">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
                         {COMPLAINTS.map(c => (
                           <ChkItem key={c} label={c} checked={form.main_complaints.includes(c)}
                             onChange={() => toggle('main_complaints', c)} />
@@ -336,7 +394,7 @@ export function Triagem() {
                 {tab === 'anamnese' && (
                   <div className="flex flex-col gap-5 max-w-2xl">
                     <Sec title="Doenças Sistêmicas">
-                      <div className="grid grid-cols-2 gap-1.5">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
                         {DISEASES.map(d => (
                           <ChkItem key={d} label={d} checked={form.systemic_diseases.includes(d)}
                             onChange={() => toggle('systemic_diseases', d)} />
@@ -361,7 +419,7 @@ export function Triagem() {
                     </Sec>
 
                     <Sec title="Medicamentos Contínuos">
-                      <div className="grid grid-cols-2 gap-1.5">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
                         {MEDS.map(m => (
                           <ChkItem key={m} label={m} checked={form.continuous_medications.includes(m)}
                             onChange={() => toggle('continuous_medications', m)} />
@@ -387,7 +445,7 @@ export function Triagem() {
                         </div>
                         {form.previous_eye_surgery && (
                           <div className="flex flex-col gap-3 animate-fade-in">
-                            <div className="grid grid-cols-3 gap-1.5">
+                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-1.5">
                               {SURGERIES.map(s => (
                                 <ChkItem key={s} label={s} checked={form.surgery_types.includes(s)}
                                   onChange={() => toggle('surgery_types', s)} />
@@ -432,7 +490,7 @@ export function Triagem() {
                             </div>
                             <div>
                               <label className="label">Há quanto tempo?</label>
-                              <div className="grid grid-cols-2 gap-1.5">
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
                                 {TRAUMA_TIMES.map(t => (
                                   <RadItem key={t} label={t} checked={form.trauma_time === t}
                                     onChange={() => set('trauma_time', t)} />
@@ -472,8 +530,12 @@ export function Triagem() {
                 {/* TAB 3 */}
                 {tab === 'exames' && (
                   <div className="flex flex-col gap-5 max-w-2xl">
-                    <Sec title="Acuidade Visual">
-                      <div className="grid grid-cols-2 gap-4">
+                    <CollapsibleSection
+                      title="Acuidade Visual"
+                      open={examSectionsOpen.av}
+                      onToggle={() => toggleExamSection('av')}
+                    >
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div className="p-4 rounded-xl border border-slate-200 bg-slate-50">
                           <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Olho Direito (OD)</p>
                           <div className="flex flex-col gap-2">
@@ -489,10 +551,14 @@ export function Triagem() {
                           </div>
                         </div>
                       </div>
-                    </Sec>
+                    </CollapsibleSection>
 
-                    <Sec title="Autorrefração">
-                      <div className="grid grid-cols-2 gap-4">
+                    <CollapsibleSection
+                      title="Autorrefração"
+                      open={examSectionsOpen.autorefracao}
+                      onToggle={() => toggleExamSection('autorefracao')}
+                    >
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div className="p-4 rounded-xl border border-slate-200 bg-slate-50">
                           <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">OD</p>
                           <div className="grid grid-cols-2 gap-2">
@@ -514,21 +580,29 @@ export function Triagem() {
                           </div>
                         </div>
                       </div>
-                    </Sec>
+                    </CollapsibleSection>
 
-                    <Sec title="Biometria — Diâmetro Axial">
-                      <div className="grid grid-cols-2 gap-4">
+                    <CollapsibleSection
+                      title="Biometria — Diâmetro Axial"
+                      open={examSectionsOpen.biometria}
+                      onToggle={() => toggleExamSection('biometria')}
+                    >
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <NumF label="OD (mm)" value={form.biometry_od_axial} onChange={v => set('biometry_od_axial', v)} ph="23.00" />
                         <NumF label="OE (mm)" value={form.biometry_oe_axial} onChange={v => set('biometry_oe_axial', v)} ph="23.00" />
                       </div>
-                    </Sec>
+                    </CollapsibleSection>
 
-                    <Sec title="Observações de Triagem">
+                    <CollapsibleSection
+                      title="Observações de Triagem"
+                      open={examSectionsOpen.observacoes}
+                      onToggle={() => toggleExamSection('observacoes')}
+                    >
                       <textarea className="input text-sm resize-none" rows={3}
                         placeholder="Anotações adicionais…"
                         value={form.triage_notes}
                         onChange={e => set('triage_notes', e.target.value)} />
-                    </Sec>
+                    </CollapsibleSection>
                   </div>
                 )}
 
@@ -549,7 +623,7 @@ export function Triagem() {
                       <RRow label="Trauma ocular" value={form.eye_trauma ? `Sim — ${form.trauma_eye} (${form.trauma_time})` : 'Não'} />
                       <RRow label="Alergia medicamentosa" value={form.drug_allergy ? (form.drug_allergy_description || 'Sim') : 'Não'} />
                       <div className="border-t border-brand-200 my-3" />
-                      <div className="grid grid-cols-2 gap-1">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">
                         <RRow label="AV OD CC" value={form.av_od_cc} />
                         <RRow label="AV OD SC" value={form.av_od_sc} />
                         <RRow label="AV OE CC" value={form.av_oe_cc} />
@@ -576,7 +650,7 @@ export function Triagem() {
                         </>
                       )}
                     </div>
-                    <button onClick={handleSave} disabled={saving} className="btn-primary">
+                    <button onClick={handleSave} disabled={saving} className="btn-primary hidden md:inline-flex">
                       <Save size={14} />
                       {saving ? 'Salvando…' : 'Salvar Triagem e Encaminhar para Consulta'}
                     </button>
@@ -585,7 +659,7 @@ export function Triagem() {
               </div>
 
               {/* Footer nav */}
-              <div className="flex items-center justify-between px-5 py-3 border-t border-slate-100 bg-white shrink-0">
+              <div className="flex items-center justify-between px-4 sm:px-5 py-3 border-t border-slate-100 bg-white shrink-0 safe-bottom">
                 <button onClick={() => tabIdx > 0 && setTab(TABS[tabIdx - 1].id)}
                   disabled={tabIdx === 0} className="btn-secondary text-xs disabled:opacity-30">
                   ← Anterior
