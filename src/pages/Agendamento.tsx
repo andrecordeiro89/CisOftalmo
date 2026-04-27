@@ -20,6 +20,20 @@ interface MedRecord {
   }
 }
 type MobileView = 'fila' | 'form'
+type QueueTab = 'pendentes' | 'agendados'
+
+interface AppointmentRow {
+  id: string
+  visit_id: string
+  patient_id: string
+  scheduled_date: string
+  scheduled_time: string
+  procedure: string
+  eye: string
+  notes: string
+  status: string
+  patient: Patient | Patient[] | null
+}
 
 // ─── Calendar helpers ─────────────────────────────────────────────────────────
 
@@ -201,6 +215,9 @@ export function Agendamento() {
   const {toast} = useToast()
   const [visits, setVisits] = useState<VisitFull[]>([])
   const [loading, setLoading] = useState(true)
+  const [queueTab, setQueueTab] = useState<QueueTab>('pendentes')
+  const [appointments, setAppointments] = useState<AppointmentRow[]>([])
+  const [loadingAppointments, setLoadingAppointments] = useState(true)
   const [selected, setSelected] = useState<VisitFull | null>(null)
   const [mobileView, setMobileView] = useState<MobileView>('fila')
   const patientInfoRef = useRef<HTMLDivElement | null>(null)
@@ -232,12 +249,50 @@ export function Agendamento() {
     setLoading(false)
   }
 
+  const loadAppointments = async () => {
+    setLoadingAppointments(true)
+    const { data, error } = await supabase
+      .from('appointments')
+      .select('id, visit_id, patient_id, scheduled_date, scheduled_time, procedure, eye, notes, status, patient:patients(*)')
+      .eq('status', 'agendado')
+      .order('scheduled_date', { ascending: true })
+      .order('scheduled_time', { ascending: true })
+    if (error) toast('Erro ao carregar agendados', 'error')
+    else setAppointments((data ?? []) as unknown as AppointmentRow[])
+    setLoadingAppointments(false)
+  }
+
   const loadBooked = async () => {
     const {data} = await supabase.from('appointments').select('scheduled_date').eq('status', 'agendado')
     if (data) setBookedDates(data.map(d => d.scheduled_date))
   }
 
-  useEffect(() => { load(); loadBooked() }, [])
+  useEffect(() => { load(); loadBooked(); loadAppointments() }, [])
+
+  const refreshAll = () => {
+    load()
+    loadBooked()
+    loadAppointments()
+  }
+
+  const selectScheduled = async (a: AppointmentRow) => {
+    const visitId = a.visit_id
+    if (!visitId) return
+    const { data, error } = await supabase
+      .from('visits')
+      .select('*, patient:patients(*), medical_records(*)')
+      .eq('id', visitId)
+      .maybeSingle()
+    if (error || !data) {
+      toast('Erro ao abrir agendamento', 'error')
+      return
+    }
+    setSelected(data as VisitFull)
+    setSelectedDate(a.scheduled_date || '')
+    setSelectedTime(a.scheduled_time || '07:00')
+    setConfirmed(true)
+    setMobileView('form')
+  }
 
   const handleConfirm = async () => {
     if (!selected || !selectedDate) { toast('Selecione uma data', 'error'); return }
@@ -259,10 +314,16 @@ export function Agendamento() {
 
     await supabase.from('visits').update({status: 'agendado'}).eq('id', selected.id)
 
+    await supabase
+      .from('surgical_cases')
+      .update({ surgery_date: selectedDate, surgery_time: selectedTime })
+      .eq('visit_id', selected.id)
+
     toast(`Cirurgia de ${selected.patient.name} agendada para ${formatDate(selectedDate)}!`, 'success')
     setConfirmed(true)
     loadBooked()
     load()
+    loadAppointments()
     setConfirming(false)
   }
 
@@ -321,44 +382,88 @@ export function Agendamento() {
             <List size={14} />
             {mobileView === 'fila' ? 'Calendário' : 'Fila'}
           </button>
-          <button onClick={load} className="btn-ghost" title="Atualizar"><RefreshCw size={14} /></button>
+          <button onClick={refreshAll} className="btn-ghost" title="Atualizar"><RefreshCw size={14} /></button>
         </div>
       }>
       <div className="flex flex-col lg:flex-row gap-4 lg:gap-6 lg:h-[calc(100vh-145px)] min-h-0">
 
         {/* Queue */}
         <div className={`w-full lg:w-64 shrink-0 card flex flex-col overflow-hidden ${mobileView === 'form' ? 'hidden lg:flex' : ''}`}>
-          <div className="px-4 py-3 border-b border-slate-100 flex items-center gap-2 shrink-0">
-            <span className="w-2 h-2 rounded-full bg-red-400 shrink-0" />
-            <p className="text-sm font-semibold text-slate-700">Aguardando Agendamento
-              <span className="ml-1 text-xs font-normal text-slate-400">({visits.length})</span>
-            </p>
+          <div className="px-2 py-2 border-b border-slate-100 flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => setQueueTab('pendentes')}
+              className={`flex-1 px-3 py-2 rounded-lg text-xs font-semibold transition-colors ${
+                queueTab === 'pendentes' ? 'bg-red-50 text-red-700' : 'text-slate-500 hover:bg-slate-50'
+              }`}
+            >
+              Pendentes <span className="ml-1 font-normal">({visits.length})</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setQueueTab('agendados')}
+              className={`flex-1 px-3 py-2 rounded-lg text-xs font-semibold transition-colors ${
+                queueTab === 'agendados' ? 'bg-emerald-50 text-emerald-700' : 'text-slate-500 hover:bg-slate-50'
+              }`}
+            >
+              Agendados <span className="ml-1 font-normal">({appointments.length})</span>
+            </button>
           </div>
           <div className="flex-1 overflow-auto scrollbar-thin divide-y divide-slate-50">
-            {loading ? (
-              <div className="flex items-center justify-center py-8 text-slate-400 text-sm gap-2">
-                <RefreshCw size={12} className="animate-spin" />Carregando…
-              </div>
-            ) : visits.length === 0 ? (
-              <p className="text-sm text-slate-400 text-center py-8">Nenhum paciente</p>
-            ) : visits.map(v => (
-              <button key={v.id} onClick={() => { setSelected(v); setSelectedDate(''); setConfirmed(false); setMobileView('form') }}
-                className={`w-full text-left px-4 py-3 flex items-center gap-3 transition-colors ${
-                  selected?.id === v.id ? 'bg-brand-50' : 'hover:bg-slate-50'
-                }`}>
-                <div className="w-8 h-8 rounded-full bg-red-100 flex items-center justify-center shrink-0">
-                  <User size={14} className="text-red-700" />
+            {queueTab === 'pendentes' ? (
+              loading ? (
+                <div className="flex items-center justify-center py-8 text-slate-400 text-sm gap-2">
+                  <RefreshCw size={12} className="animate-spin" />Carregando…
                 </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-slate-800 truncate">{v.patient.name}</p>
-                  <p className="text-xs text-slate-400">
-                    {v.medical_records?.[0]?.conduct?.cataract
-                      ? `Catarata — ${v.medical_records[0].conduct.cataract.eye}` : 'Cirurgia'}
-                  </p>
+              ) : visits.length === 0 ? (
+                <p className="text-sm text-slate-400 text-center py-8">Nenhum paciente pendente</p>
+              ) : visits.map(v => (
+                <button key={v.id} onClick={() => { setSelected(v); setSelectedDate(''); setConfirmed(false); setMobileView('form') }}
+                  className={`w-full text-left px-4 py-3 flex items-center gap-3 transition-colors ${
+                    selected?.id === v.id ? 'bg-brand-50' : 'hover:bg-slate-50'
+                  }`}>
+                  <div className="w-8 h-8 rounded-full bg-red-100 flex items-center justify-center shrink-0">
+                    <User size={14} className="text-red-700" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-slate-800 truncate">{v.patient.name}</p>
+                    <p className="text-xs text-slate-400">
+                      {v.medical_records?.[0]?.conduct?.cataract
+                        ? `Catarata — ${v.medical_records[0].conduct.cataract.eye}` : 'Cirurgia'}
+                    </p>
+                  </div>
+                  <ChevronRight size={12} className="text-slate-300 shrink-0" />
+                </button>
+              ))
+            ) : (
+              loadingAppointments ? (
+                <div className="flex items-center justify-center py-8 text-slate-400 text-sm gap-2">
+                  <RefreshCw size={12} className="animate-spin" />Carregando…
                 </div>
-                <ChevronRight size={12} className="text-slate-300 shrink-0" />
-              </button>
-            ))}
+              ) : appointments.length === 0 ? (
+                <p className="text-sm text-slate-400 text-center py-8">Nenhum paciente agendado</p>
+              ) : appointments.map(a => {
+                const p = Array.isArray(a.patient) ? a.patient[0] : a.patient
+                return (
+                  <button
+                    key={a.id}
+                    onClick={() => selectScheduled(a)}
+                    className="w-full text-left px-4 py-3 flex items-center gap-3 transition-colors hover:bg-slate-50"
+                  >
+                    <div className="w-8 h-8 rounded-full bg-emerald-100 flex items-center justify-center shrink-0">
+                      <CalendarDays size={14} className="text-emerald-700" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-slate-800 truncate">{p?.name || '—'}</p>
+                      <p className="text-xs text-slate-400 truncate">
+                        {a.scheduled_date ? formatDate(a.scheduled_date) : '—'} · {a.scheduled_time || '—'}
+                      </p>
+                    </div>
+                    <ChevronRight size={12} className="text-slate-300 shrink-0" />
+                  </button>
+                )
+              })
+            )}
           </div>
         </div>
 

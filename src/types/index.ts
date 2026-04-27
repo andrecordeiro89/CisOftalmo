@@ -29,8 +29,10 @@ export interface Patient {
   id: string
   name: string
   cpf: string
-  birth_date: string
-  mother_name: string
+  birth_date?: string | null
+  mother_name?: string | null
+  sex?: string | null
+  city?: string | null
   created_at: string
 }
 

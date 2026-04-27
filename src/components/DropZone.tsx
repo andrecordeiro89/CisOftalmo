@@ -9,6 +9,7 @@ interface DropZoneProps {
   accept?: Record<string, string[]>
   label?: string
   hint?: string
+  loadingText?: string
 }
 
 export function DropZone({
@@ -17,6 +18,7 @@ export function DropZone({
   accept = { 'application/pdf': ['.pdf'] },
   label = 'Arraste o PDF aqui',
   hint = 'ou clique para selecionar — somente PDF',
+  loadingText = 'Extraindo dados do PDF…',
 }: DropZoneProps) {
   const [currentFile, setCurrentFile] = useState<File | null>(null)
 
@@ -59,7 +61,7 @@ export function DropZone({
       {loading ? (
         <>
           <Loader2 size={32} className="text-brand-500 animate-spin" />
-          <p className="text-sm text-slate-500 font-medium">Extraindo dados do PDF…</p>
+          <p className="text-sm text-slate-500 font-medium">{loadingText}</p>
         </>
       ) : currentFile ? (
         <>

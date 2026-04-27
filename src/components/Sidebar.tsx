@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { NavLink } from 'react-router-dom'
-import { LayoutDashboard, UserPlus, ClipboardList, Stethoscope, CalendarDays, Eye, X, LogOut, Settings, KeyRound, RefreshCw } from 'lucide-react'
+import { LayoutDashboard, UserPlus, ClipboardList, Stethoscope, CalendarDays, Eye, X, LogOut, Settings, KeyRound, RefreshCw, Scissors } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/lib/auth'
 import { useToast } from '@/lib/toast'
@@ -12,6 +12,7 @@ const nav = [
   { to: '/triagem',     label: 'Triagem',          icon: ClipboardList   },
   { to: '/consulta',    label: 'Consulta Médica',  icon: Stethoscope     },
   { to: '/agendamento', label: 'Agendamento',      icon: CalendarDays    },
+  { to: '/cirurgico',   label: 'Cirúrgico',        icon: Scissors        },
 ]
 
 export function Sidebar({

@@ -239,6 +239,40 @@ export function Consulta() {
     const newStatus = hasCataract ? 'aguardando_agendamento' : 'finalizado'
     await supabase.from('visits').update({status: newStatus}).eq('id', selected.id)
 
+    if (hasCataract) {
+      const cpf = (selected.patient as { cpf?: string } | undefined)?.cpf ?? ''
+      const eye = form.cataract_eye || null
+      const eye_number = eye === 'OD' ? 1 : eye === 'OE' ? 2 : null
+      const notes = form.cataract_notes || null
+
+      if (cpf) {
+        await supabase.from('surgical_cases').upsert({
+          visit_id: selected.id,
+          patient_id: selected.patient_id,
+          cpf,
+          patient_name: selected.patient.name,
+          surgeon: null,
+          surgery_date: null,
+          surgery_time: null,
+          eye,
+          eye_number,
+          anesthesia: null,
+          instrumentador: null,
+          circulante: null,
+          lio: null,
+          surgery: 'Catarata',
+          diseases: null,
+          observation: notes,
+          allergies: null,
+          av_pre_op: null,
+          city: null,
+          source: 'system',
+          source_file: null,
+          source_row: null,
+        }, { onConflict: 'visit_id' })
+      }
+    }
+
     toast(`Consulta de ${selected.patient.name} finalizada!`, 'success')
     setShowSummary(true)
     load()

@@ -9,6 +9,7 @@ import { Paciente } from '@/pages/Paciente'
 import { Triagem } from '@/pages/Triagem'
 import { Consulta } from '@/pages/Consulta'
 import { Agendamento } from '@/pages/Agendamento'
+import { Cirurgico } from '@/pages/Cirurgico'
 import { Login } from '@/pages/Login'
 
 function ProtectedShell({
@@ -76,6 +77,7 @@ export default function App() {
                 <Route path="/triagem"       element={<Triagem />} />
                 <Route path="/consulta"      element={<Consulta />} />
                 <Route path="/agendamento"   element={<Agendamento />} />
+                <Route path="/cirurgico"     element={<Cirurgico />} />
               </Route>
               <Route path="*" element={<Navigate to="/paciente" replace />} />
             </Routes>
