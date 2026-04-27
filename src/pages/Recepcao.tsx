@@ -1,8 +1,10 @@
 import { useState, useEffect, useMemo, Fragment } from 'react'
+import * as Dialog from '@radix-ui/react-dialog'
 import {
   Search, ChevronDown, ChevronRight,
   RefreshCw, Eye, Scissors, CheckCheck,
   CalendarClock, Activity, CalendarCheck,
+  RotateCcw, X,
 } from 'lucide-react'
 import { PageLayout } from '@/components/PageLayout'
 import { StatusBadge } from '@/components/StatusBadge'
@@ -11,6 +13,7 @@ import { supabase } from '@/lib/supabase'
 import { formatCPF, formatDate } from '@/lib/pdfExtractor'
 import {
   type Patient, type Visit,
+  type VisitType, type OciSubtype,
   VISIT_TYPE_LABELS, OCI_SUBTYPE_LABELS,
 } from '@/types'
 
@@ -23,6 +26,21 @@ interface SurgicalVisit extends Visit {
 }
 
 type ActiveTab = 'pacientes' | 'cirurgico'
+
+const VISIT_TYPE_OPTIONS: VisitType[] = [
+  'primeira_consulta',
+  'retorno',
+  'yag_laser',
+  'oci',
+  'exames_retina',
+]
+
+const OCI_SUBTYPE_OPTIONS: OciSubtype[] = [
+  'avaliacao_0_8',
+  'avaliacao_9_mais',
+  'retinopatia_diabetica',
+  'estrabismo',
+]
 
 export function Recepcao() {
   const { toast } = useToast()
@@ -37,6 +55,13 @@ export function Recepcao() {
   const [surgicalVisits, setSurgicalVisits]       = useState<SurgicalVisit[]>([])
   const [loadingSurgical, setLoadingSurgical]     = useState(true)
   const [markingPresent, setMarkingPresent]       = useState<string | null>(null)
+
+  const [readmitOpen, setReadmitOpen] = useState(false)
+  const [readmitPatient, setReadmitPatient] = useState<PatientWithVisit | null>(null)
+  const [readmitType, setReadmitType] = useState<VisitType>('primeira_consulta')
+  const [readmitOciSubtype, setReadmitOciSubtype] = useState<OciSubtype>('avaliacao_0_8')
+  const [readmitForce, setReadmitForce] = useState(false)
+  const [readmitting, setReadmitting] = useState(false)
 
   // ── Load patients ──────────────────────────────────────────────────────────
   const loadPatients = async () => {
@@ -133,6 +158,51 @@ export function Recepcao() {
   const surgicalPending  = surgicalVisits.filter(v => v.status === 'aguardando_agendamento')
   const surgicalPresente = surgicalVisits.filter(v => v.status === 'presente_cirurgia')
 
+  const openReadmit = (patient: PatientWithVisit) => {
+    const sorted = [...(patient.visits ?? [])].sort(
+      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    )
+    const latest = sorted[0]
+    setReadmitPatient(patient)
+    setReadmitType(latest?.visit_type ?? 'primeira_consulta')
+    setReadmitOciSubtype(latest?.oci_subtype ?? 'avaliacao_0_8')
+    setReadmitForce(false)
+    setReadmitOpen(true)
+  }
+
+  const createReadmission = async () => {
+    if (!readmitPatient || readmitting) return
+
+    const visits = readmitPatient.visits ?? []
+    const ongoing = visits.filter(v => v.status !== 'finalizado')
+    const hasOngoing = ongoing.length > 0
+
+    if (hasOngoing && !readmitForce) {
+      toast('Este paciente já possui um atendimento em andamento. Confirme a readmissão para criar outro.', 'info')
+      return
+    }
+
+    setReadmitting(true)
+    const { error } = await supabase.from('visits').insert({
+      patient_id: readmitPatient.id,
+      visit_type: readmitType,
+      oci_subtype: readmitType === 'oci' ? readmitOciSubtype : null,
+      status: 'triagem',
+    })
+
+    if (error) {
+      toast('Erro ao readmitir paciente: ' + error.message, 'error')
+      setReadmitting(false)
+      return
+    }
+
+    toast(`Paciente readmitido: ${readmitPatient.name}`, 'success')
+    setReadmitOpen(false)
+    setReadmitPatient(null)
+    loadPatients()
+    setReadmitting(false)
+  }
+
   return (
     <PageLayout
       title="Recepção"
@@ -147,6 +217,162 @@ export function Recepcao() {
         </button>
       }
     >
+      <Dialog.Root
+        open={readmitOpen}
+        onOpenChange={open => {
+          setReadmitOpen(open)
+          if (!open) {
+            setReadmitPatient(null)
+            setReadmitting(false)
+            setReadmitForce(false)
+          }
+        }}
+      >
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 z-50 bg-black/50" />
+          <Dialog.Content className="fixed z-50 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[92vw] max-w-lg rounded-2xl bg-white border border-slate-200 shadow-xl">
+            <div className="p-5 border-b border-slate-100 flex items-start gap-3">
+              <div className="w-10 h-10 rounded-xl bg-brand-50 flex items-center justify-center shrink-0 border border-brand-200">
+                <RotateCcw size={18} className="text-brand-700" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <Dialog.Title className="font-display font-semibold text-slate-900">
+                  Readmitir paciente
+                </Dialog.Title>
+                <Dialog.Description className="text-xs text-slate-500">
+                  Cria um novo atendimento e envia o paciente para triagem.
+                </Dialog.Description>
+              </div>
+              <Dialog.Close asChild>
+                <button className="btn-ghost p-2 min-h-0" aria-label="Fechar">
+                  <X size={16} />
+                </button>
+              </Dialog.Close>
+            </div>
+
+            <div className="p-5 flex flex-col gap-4">
+              {readmitPatient && (() => {
+                const sorted = [...(readmitPatient.visits ?? [])].sort(
+                  (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+                )
+                const latest = sorted[0]
+                const ongoing = sorted.filter(v => v.status !== 'finalizado')
+                const hasOngoing = ongoing.length > 0
+                const ongoingStatuses = [...new Set(ongoing.map(v => v.status))].join(', ')
+
+                return (
+                  <>
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                      <p className="text-sm font-semibold text-slate-800">{readmitPatient.name}</p>
+                      <p className="text-xs text-slate-500 mt-1">
+                        CPF <span className="font-mono">{formatCPF(readmitPatient.cpf)}</span>
+                        {readmitPatient.birth_date ? ` · Nasc ${formatDate(readmitPatient.birth_date)}` : ''}
+                      </p>
+                      <p className="text-xs text-slate-500 mt-2">
+                        Último atendimento: {latest ? VISIT_TYPE_LABELS[latest.visit_type] : '—'}
+                      </p>
+                    </div>
+
+                    {hasOngoing && (
+                      <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+                        <p className="text-sm font-semibold text-amber-900">Atenção</p>
+                        <p className="text-xs text-amber-900/80 mt-1">
+                          Existe atendimento em andamento ({ongoingStatuses}). Recomendado finalizar antes de readmitir.
+                        </p>
+                        <label className="mt-3 flex items-center gap-2 text-xs text-amber-900/90">
+                          <input
+                            type="checkbox"
+                            checked={readmitForce}
+                            onChange={e => setReadmitForce(e.target.checked)}
+                            className="accent-brand-600"
+                          />
+                          Criar novo atendimento mesmo assim
+                        </label>
+                      </div>
+                    )}
+                  </>
+                )
+              })()}
+
+              <div>
+                <label className="label">Tipo de Atendimento</label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                  {VISIT_TYPE_OPTIONS.map(value => (
+                    <label
+                      key={value}
+                      className={`flex items-center gap-2 px-2.5 py-2 rounded-lg border cursor-pointer transition-colors ${
+                        readmitType === value
+                          ? 'border-brand-400 bg-brand-50'
+                          : 'border-slate-200 hover:border-slate-300 bg-white'
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="readmit_visit_type"
+                        value={value}
+                        checked={readmitType === value}
+                        onChange={() => setReadmitType(value)}
+                        className="accent-brand-600"
+                      />
+                      <span className={`text-xs leading-tight ${readmitType === value ? 'text-brand-800 font-medium' : 'text-slate-700'}`}>
+                        {VISIT_TYPE_LABELS[value]}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              {readmitType === 'oci' && (
+                <div className="animate-fade-in">
+                  <label className="label">Subtipo OCI</label>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                    {OCI_SUBTYPE_OPTIONS.map(value => (
+                      <label
+                        key={value}
+                        className={`flex items-center gap-2 px-2.5 py-2 rounded-lg border cursor-pointer transition-colors ${
+                          readmitOciSubtype === value
+                            ? 'border-brand-400 bg-brand-50'
+                            : 'border-slate-200 hover:border-slate-300 bg-white'
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name="readmit_oci_subtype"
+                          value={value}
+                          checked={readmitOciSubtype === value}
+                          onChange={() => setReadmitOciSubtype(value)}
+                          className="accent-brand-600"
+                        />
+                        <span className={`text-xs leading-tight ${readmitOciSubtype === value ? 'text-brand-800 font-medium' : 'text-slate-700'}`}>
+                          {OCI_SUBTYPE_LABELS[value]}
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-2 pt-1">
+                <Dialog.Close asChild>
+                  <button type="button" className="btn-secondary" disabled={readmitting}>
+                    Cancelar
+                  </button>
+                </Dialog.Close>
+                <button
+                  type="button"
+                  className="btn-primary"
+                  onClick={createReadmission}
+                  disabled={readmitting || (!!readmitPatient && (readmitPatient.visits ?? []).some(v => v.status !== 'finalizado') && !readmitForce)}
+                >
+                  {readmitting && <RefreshCw size={14} className="animate-spin" />}
+                  Readmitir
+                </button>
+              </div>
+            </div>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
+
       {/* Stats bar */}
       <div className="grid grid-cols-2 xl:grid-cols-3 gap-3 mb-5">
         <StatCard icon={CalendarClock} label="Registrados hoje"      value={stats.newToday}  color="green"  loading={loadingList} />
@@ -237,6 +463,23 @@ export function Recepcao() {
                                 {latestVisit ? VISIT_TYPE_LABELS[latestVisit.visit_type] : 'Sem atendimento'}
                               </p>
                               <div className="flex items-center gap-2 text-slate-400">
+                                <span
+                                  role="button"
+                                  tabIndex={0}
+                                  onClick={e => { e.stopPropagation(); openReadmit(patient) }}
+                                  onKeyDown={e => {
+                                    if (e.key === 'Enter' || e.key === ' ') {
+                                      e.preventDefault()
+                                      e.stopPropagation()
+                                      openReadmit(patient)
+                                    }
+                                  }}
+                                  className="inline-flex items-center justify-center w-8 h-8 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700"
+                                  title="Readmitir paciente"
+                                  aria-label="Readmitir paciente"
+                                >
+                                  <RotateCcw size={14} />
+                                </span>
                                 <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-slate-100 text-slate-600 text-xs font-medium">
                                   {sorted.length}
                                 </span>
@@ -288,7 +531,7 @@ export function Recepcao() {
                       <col className="w-[22%]" />
                       <col className="w-[12%]" />
                       <col className="w-[4%]" />
-                      <col className="w-8" />
+                      <col className="w-16" />
                     </colgroup>
                     <thead>
                       <tr className="text-left text-xs font-medium text-slate-500 uppercase tracking-wide bg-slate-50 border-b border-slate-100">
@@ -298,7 +541,7 @@ export function Recepcao() {
                         <th className="px-4 py-2.5">Último atendimento</th>
                         <th className="px-4 py-2.5">Status</th>
                         <th className="px-4 py-2.5 text-center">Nº</th>
-                        <th className="px-3 py-2.5"></th>
+                        <th className="px-3 py-2.5 text-right">Ações</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -317,6 +560,7 @@ export function Recepcao() {
                               visitCount={sorted.length}
                               expanded={isExpanded}
                               onToggle={() => setExpandedId(isExpanded ? null : patient.id)}
+                              onReadmit={() => openReadmit(patient)}
                             />
                             {isExpanded && sorted.length > 0 && (
                               <tr className="bg-slate-50/80">
@@ -528,13 +772,14 @@ function SurgicalRow({
 // ── TableRow ──────────────────────────────────────────────────────────────────
 
 function TableRow({
-  patient, latestVisit, visitCount, expanded, onToggle,
+  patient, latestVisit, visitCount, expanded, onToggle, onReadmit,
 }: {
   patient: PatientWithVisit
   latestVisit?: Visit
   visitCount: number
   expanded: boolean
   onToggle: () => void
+  onReadmit: () => void
 }) {
   return (
     <tr
@@ -564,8 +809,21 @@ function TableRow({
           {visitCount}
         </span>
       </td>
-      <td className="px-3 py-3 text-slate-400">
-        {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+      <td className="px-3 py-3">
+        <div className="flex items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={e => { e.stopPropagation(); onReadmit() }}
+            className="inline-flex items-center justify-center w-8 h-8 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700"
+            title="Readmitir paciente"
+            aria-label="Readmitir paciente"
+          >
+            <RotateCcw size={12} />
+          </button>
+          <span className="text-slate-400">
+            {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+          </span>
+        </div>
       </td>
     </tr>
   )

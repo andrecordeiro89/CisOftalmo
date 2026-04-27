@@ -17,7 +17,7 @@ type MobileView = 'fila' | 'form'
 
 interface ConsultaForm {
   biomicroscopy_od: string; biomicroscopy_oe: string
-  fo_od: string[]; fo_oe: string[]
+  fo_od: string[]; fo_oe: string[]; fo_od_other: string; fo_oe_other: string
   tono_od_type: string; tono_od_value: string
   tono_oe_type: string; tono_oe_value: string
   ortho_motility: string; ortho_fusion: string; ortho_pupils: string; ortho_deviation: string
@@ -37,7 +37,7 @@ interface ConsultaForm {
 
 const EMPTY_C: ConsultaForm = {
   biomicroscopy_od: '', biomicroscopy_oe: '',
-  fo_od: [], fo_oe: [],
+  fo_od: [], fo_oe: [], fo_od_other: '', fo_oe_other: '',
   tono_od_type: '', tono_od_value: '', tono_oe_type: '', tono_oe_value: '',
   ortho_motility: '', ortho_fusion: '', ortho_pupils: '', ortho_deviation: '',
   topography: '', mec: '',
@@ -90,17 +90,6 @@ function Rad({label, checked, onChange}: {label: string; checked: boolean; onCha
   )
 }
 
-function TriageTag({label, value}: {label: string; value: unknown}) {
-  if (!value || (Array.isArray(value) && value.length === 0)) return null
-  const display = Array.isArray(value) ? (value as string[]).join(', ') : String(value)
-  return (
-    <div className="flex flex-wrap gap-1 mb-1">
-      <span className="text-xs font-semibold text-slate-500 mr-1">{label}:</span>
-      <span className="text-xs text-slate-700">{display}</span>
-    </div>
-  )
-}
-
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 export function Consulta() {
@@ -129,6 +118,7 @@ export function Consulta() {
   const [form, setForm] = useState<ConsultaForm>(EMPTY_C)
   const [saving, setSaving] = useState(false)
   const [showSummary, setShowSummary] = useState(false)
+  const [claiming, setClaiming] = useState(false)
   const triageSummaryRef = useRef<HTMLDivElement | null>(null)
   const biomicroscopyRef = useRef<HTMLDivElement | null>(null)
   const foRef = useRef<HTMLDivElement | null>(null)
@@ -159,15 +149,52 @@ export function Consulta() {
     const arr = form[key] as string[]
     set(key, arr.includes(item) ? arr.filter(x => x !== item) : [...arr, item])
   }
+  const toggleFo = (side: 'od' | 'oe', item: string) => {
+    const key = side === 'od' ? 'fo_od' : 'fo_oe'
+    const otherKey = side === 'od' ? 'fo_od_other' : 'fo_oe_other'
+    const arr = form[key] as string[]
+    const next = arr.includes(item) ? arr.filter(x => x !== item) : [...arr, item]
+    set(key, next)
+    if (arr.includes(item) && item === 'Outro') set(otherKey, '')
+  }
 
-  const selectVisit = async (v: VisitWithPatient) => {
-    setSelected(v); setForm(EMPTY_C); setShowSummary(false)
+  const selectVisit = (v: VisitWithPatient) => {
+    setSelected(v)
+    setForm(EMPTY_C)
+    setShowSummary(false)
     setMobileView('form')
-    await supabase.from('visits').update({status: 'em_consulta'}).eq('id', v.id)
+  }
+
+  const startConsultation = async (v: VisitWithPatient) => {
+    if (claiming) return
+    setClaiming(true)
+    try {
+      const { data, error } = await supabase.rpc('claim_consulta', { p_visit_id: v.id })
+      if (error) {
+        const msg = error.message?.includes('already_claimed')
+          ? 'Este paciente já foi chamado para consulta.'
+          : error.message?.includes('forbidden')
+            ? 'Sem permissão para chamar paciente.'
+            : `Erro ao chamar paciente: ${error.message}`
+        toast(msg, error.message?.includes('already_claimed') ? 'info' : 'error')
+        load()
+        return
+      }
+      toast('Paciente chamado para consulta', 'success')
+      setSelected({ ...v, ...(data as Visit), status: 'em_consulta' })
+      setMobileView('form')
+      load()
+    } finally {
+      setClaiming(false)
+    }
   }
 
   const handleSave = async () => {
     if (!selected) return
+    if (selected.status !== 'em_consulta') {
+      toast('Clique em “Chamar paciente” para iniciar a consulta antes de salvar.', 'error')
+      return
+    }
     setSaving(true)
 
     const hasCataract = form.conduct_cataract
@@ -178,6 +205,8 @@ export function Consulta() {
       biomicroscopy_oe: form.biomicroscopy_oe,
       fo_od: form.fo_od,
       fo_oe: form.fo_oe,
+      fo_od_other: form.fo_od.includes('Outro') ? (form.fo_od_other || null) : null,
+      fo_oe_other: form.fo_oe.includes('Outro') ? (form.fo_oe_other || null) : null,
       tono_od: form.tono_od_type + (form.tono_od_value ? ` (${form.tono_od_value})` : ''),
       tono_oe: form.tono_oe_type + (form.tono_oe_value ? ` (${form.tono_oe_value})` : ''),
       orthoptic_motility: form.ortho_motility,
@@ -317,6 +346,30 @@ export function Consulta() {
               </div>
 
               <div className="flex-1 overflow-auto scrollbar-thin p-4 sm:p-5 pb-28 sm:pb-5 flex flex-col gap-6">
+                {selected?.status === 'aguardando_consulta' && !showSummary && (
+                  <div className="card p-4 border-brand-200 bg-brand-50">
+                    <div className="flex items-start gap-3">
+                      <div className="w-9 h-9 rounded-xl bg-white border border-brand-200 flex items-center justify-center shrink-0">
+                        <Stethoscope size={16} className="text-brand-700" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-semibold text-brand-900 text-sm">Paciente aguardando</p>
+                        <p className="text-xs text-brand-800/80">
+                          Para registrar a consulta, inicie o atendimento.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => selected && startConsultation(selected)}
+                        disabled={claiming}
+                        className="btn-primary text-xs"
+                      >
+                        {claiming ? 'Chamando…' : 'Chamar paciente'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 <div className="md:hidden -mt-2">
                   <div className="flex gap-2 overflow-x-auto scrollbar-thin pb-2">
                     {triage && (
@@ -381,35 +434,157 @@ export function Consulta() {
                 </div>
 
                 {/* ── Triage summary (read-only) ── */}
-                {triage && (
-                  <div ref={triageSummaryRef}>
-                    <CollapsibleSection
-                      title="Resumo da Triagem"
-                      open={sectionsOpen.triageSummary}
-                      onToggle={() => toggleSection('triageSummary')}
-                      className="bg-slate-50"
-                      headerClassName="border-b border-slate-200"
-                    >
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6">
-                        <TriageTag label="Motivo" value={triage.consultation_reason} />
-                        <TriageTag label="Queixas" value={triage.main_complaints} />
-                        <TriageTag label="Doenças" value={triage.systemic_diseases} />
-                        <TriageTag label="Medicamentos" value={triage.continuous_medications} />
-                        <TriageTag label="Alergia" value={triage.drug_allergy ? (triage.drug_allergy_description || 'Sim') : 'Não'} />
-                        <TriageTag label="Cirurgia prévia" value={triage.previous_eye_surgery ? 'Sim' : 'Não'} />
+                {triage && (() => {
+                  const asText = (v: unknown) => typeof v === 'string' ? v.trim() : ''
+                  const asArr = (v: unknown) =>
+                    Array.isArray(v)
+                      ? (v as unknown[]).filter((x): x is string => typeof x === 'string').map(s => s.trim()).filter(Boolean)
+                      : []
+
+                  const otherText = asText(triage.other_complaint)
+                  const reason = asText(triage.consultation_reason)
+                  const reasonIsOther = reason === 'Outros'
+
+                  const mainComplaints = asArr(triage.main_complaints)
+                  const complaintsHasOther = mainComplaints.includes('Outros')
+                  const complaintsBase = mainComplaints.filter(c => c !== 'Outros')
+
+                  const diseases = asArr(triage.systemic_diseases)
+                  const meds = asArr(triage.continuous_medications)
+
+                  const allergy = triage.drug_allergy === true
+                  const allergyDesc = asText(triage.drug_allergy_description)
+                  const surgery = triage.previous_eye_surgery === true
+
+                  const av = {
+                    od_cc: asText(triage.av_od_cc),
+                    od_sc: asText(triage.av_od_sc),
+                    oe_cc: asText(triage.av_oe_cc),
+                    oe_sc: asText(triage.av_oe_sc),
+                  }
+
+                  const renderBadges = (items: string[], emptyLabel: string) => {
+                    if (!items.length) return <span className="text-sm text-slate-400">{emptyLabel}</span>
+                    return (
+                      <div className="flex flex-wrap gap-1.5">
+                        {items.map(it => (
+                          <span key={it} className="badge-slate">{it}</span>
+                        ))}
                       </div>
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-2">
-                        {[['AV OD CC', triage.av_od_cc],['AV OD SC', triage.av_od_sc],['AV OE CC', triage.av_oe_cc],['AV OE SC', triage.av_oe_sc]]
-                          .map(([l, v]) => v ? (
-                            <div key={l as string} className="px-2 py-1 rounded bg-white border border-slate-200 text-center">
-                              <p className="text-xs text-slate-400">{l as string}</p>
-                              <p className="text-sm font-semibold text-slate-800">{v as string}</p>
+                    )
+                  }
+
+                  return (
+                    <div ref={triageSummaryRef}>
+                      <CollapsibleSection
+                        title="Resumo da Triagem"
+                        open={sectionsOpen.triageSummary}
+                        onToggle={() => toggleSection('triageSummary')}
+                        className="bg-slate-50"
+                        headerClassName="border-b border-slate-200"
+                        contentClassName="pt-4"
+                      >
+                        <div className="grid grid-cols-1 lg:grid-cols-3 gap-3">
+                          <div className="lg:col-span-2 rounded-xl border border-slate-200 bg-white p-4">
+                            <div className="flex items-center justify-between gap-3 mb-3">
+                              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Motivo e Queixas</p>
+                              {reasonIsOther && <span className="badge-amber">Motivo: outros</span>}
                             </div>
-                          ) : null)}
-                      </div>
-                    </CollapsibleSection>
-                  </div>
-                )}
+
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                              <div>
+                                <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Motivo da consulta</p>
+                                <div className="mt-1">
+                                  {reasonIsOther ? (
+                                    <div>
+                                      <div className="flex items-center gap-2">
+                                        <span className="badge-slate">Outros</span>
+                                        <span className="text-sm font-medium text-slate-800">
+                                          {otherText ? 'Detalhado' : 'Sem descrição'}
+                                        </span>
+                                      </div>
+                                      <p className="text-sm text-slate-700 mt-1 whitespace-pre-wrap">{otherText || '—'}</p>
+                                    </div>
+                                  ) : (
+                                    <p className="text-sm font-medium text-slate-800">{reason || '—'}</p>
+                                  )}
+                                </div>
+                              </div>
+
+                              <div>
+                                <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Queixas principais</p>
+                                <div className="mt-1">
+                                  {renderBadges(complaintsBase.length ? complaintsBase : (mainComplaints.length ? mainComplaints : []), '—')}
+                                  {complaintsHasOther && !reasonIsOther && (
+                                    <div className="mt-2">
+                                      <div className="flex items-center gap-2">
+                                        <span className="badge-slate">Outras</span>
+                                        <span className="text-sm font-medium text-slate-800">
+                                          {otherText ? 'Detalhado' : 'Sem descrição'}
+                                        </span>
+                                      </div>
+                                      <p className="text-sm text-slate-700 mt-1 whitespace-pre-wrap">{otherText || '—'}</p>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="rounded-xl border border-slate-200 bg-white p-4">
+                            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Anamnese</p>
+
+                            <div className="flex flex-col gap-3">
+                              <div>
+                                <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Doenças sistêmicas</p>
+                                <div className="mt-1">{renderBadges(diseases, 'Nenhuma')}</div>
+                              </div>
+
+                              <div>
+                                <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Medicamentos</p>
+                                <div className="mt-1">{renderBadges(meds, 'Nenhum')}</div>
+                              </div>
+
+                              <div className="grid grid-cols-2 gap-2">
+                                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                                  <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Alergia</p>
+                                  <p className="text-sm font-medium text-slate-800 mt-1">
+                                    {allergy ? (allergyDesc || 'Sim') : 'Não'}
+                                  </p>
+                                </div>
+                                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                                  <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Cirurgia prévia</p>
+                                  <p className="text-sm font-medium text-slate-800 mt-1">
+                                    {surgery ? 'Sim' : 'Não'}
+                                  </p>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+
+                        {(av.od_cc || av.od_sc || av.oe_cc || av.oe_sc) && (
+                          <div className="rounded-xl border border-slate-200 bg-white p-4 mt-3">
+                            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Acuidade Visual</p>
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                              {[
+                                ['OD CC', av.od_cc],
+                                ['OD SC', av.od_sc],
+                                ['OE CC', av.oe_cc],
+                                ['OE SC', av.oe_sc],
+                              ].map(([l, v]) => (
+                                <div key={l} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+                                  <p className="text-xs text-slate-500">{l}</p>
+                                  <p className="text-sm font-semibold text-slate-800">{v || '—'}</p>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </CollapsibleSection>
+                    </div>
+                  )
+                })()}
 
                 {/* ── Medical evaluation ── */}
                 <div ref={biomicroscopyRef}>
@@ -445,18 +620,36 @@ export function Consulta() {
                         <div className="flex flex-col gap-1">
                           {FO_OPTIONS.map(o => (
                             <ChkBox key={o} label={o} checked={form.fo_od.includes(o)}
-                              onChange={() => toggleArr('fo_od', o)} />
+                              onChange={() => toggleFo('od', o)} />
                           ))}
                         </div>
+                        {form.fo_od.includes('Outro') && (
+                          <textarea
+                            className="input text-sm resize-none mt-2"
+                            rows={2}
+                            placeholder="Descreva (OD)…"
+                            value={form.fo_od_other}
+                            onChange={e => set('fo_od_other', e.target.value)}
+                          />
+                        )}
                       </div>
                       <div>
                         <p className="label">OE</p>
                         <div className="flex flex-col gap-1">
                           {FO_OPTIONS.map(o => (
                             <ChkBox key={o} label={o} checked={form.fo_oe.includes(o)}
-                              onChange={() => toggleArr('fo_oe', o)} />
+                              onChange={() => toggleFo('oe', o)} />
                           ))}
                         </div>
+                        {form.fo_oe.includes('Outro') && (
+                          <textarea
+                            className="input text-sm resize-none mt-2"
+                            rows={2}
+                            placeholder="Descreva (OE)…"
+                            value={form.fo_oe_other}
+                            onChange={e => set('fo_oe_other', e.target.value)}
+                          />
+                        )}
                       </div>
                     </div>
                   </CollapsibleSection>
@@ -714,6 +907,15 @@ export function Consulta() {
 function ConsultaSummary({form, patient, onClose}: {
   form: ConsultaForm; patient: Patient; onClose: () => void
 }) {
+  const foOdSummary = [
+    form.fo_od.join(', '),
+    form.fo_od.includes('Outro') && form.fo_od_other ? `(${form.fo_od_other})` : '',
+  ].filter(Boolean).join(' ')
+  const foOeSummary = [
+    form.fo_oe.join(', '),
+    form.fo_oe.includes('Outro') && form.fo_oe_other ? `(${form.fo_oe_other})` : '',
+  ].filter(Boolean).join(' ')
+
   return (
     <div className="flex flex-col h-full">
       <div className="flex items-center gap-3 px-5 py-4 bg-emerald-50 border-b border-emerald-200">
@@ -725,8 +927,8 @@ function ConsultaSummary({form, patient, onClose}: {
         <div className="max-w-xl flex flex-col gap-3">
           <SRow label="Biomicroscopia OD" value={form.biomicroscopy_od} />
           <SRow label="Biomicroscopia OE" value={form.biomicroscopy_oe} />
-          <SRow label="FO OD" value={form.fo_od.join(', ')} />
-          <SRow label="FO OE" value={form.fo_oe.join(', ')} />
+          <SRow label="FO OD" value={foOdSummary} />
+          <SRow label="FO OE" value={foOeSummary} />
           <SRow label="PIO OD" value={`${form.tono_od_type} ${form.tono_od_value}`} />
           <SRow label="PIO OE" value={`${form.tono_oe_type} ${form.tono_oe_value}`} />
           <SRow label="Motilidade" value={form.ortho_motility} />

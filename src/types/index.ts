@@ -42,6 +42,8 @@ export interface Visit {
   visit_type: VisitType
   oci_subtype?: OciSubtype
   status: VisitStatus
+  consulta_started_at?: string
+  consulta_started_by?: string
   created_at: string
   patient?: Patient
 }

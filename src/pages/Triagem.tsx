@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import {
   ClipboardList, ChevronRight, CheckCircle2,
   RefreshCw, User, Save, ArrowLeft, List
@@ -16,8 +16,10 @@ type Tab = 'motivo' | 'anamnese' | 'exames' | 'resumo'
 type MobileView = 'fila' | 'form'
 
 interface TriagemForm {
-  consultation_reason: string; main_complaints: string[]; other_complaint: string
-  systemic_diseases: string[]; diabetes_duration: string; hypertension_duration: string
+  consultation_reason: string; main_complaints: string[]
+  other_consultation_reason: string
+  other_main_complaints: string
+  systemic_diseases: string[]; other_systemic_diseases: string; diabetes_duration: string; hypertension_duration: string
   continuous_medications: string[]; other_medications: string
   previous_eye_surgery: boolean; surgery_types: string[]; surgery_other: string; surgery_eye: string
   eye_trauma: boolean; trauma_eye: string; trauma_time: string; trauma_description: string
@@ -31,8 +33,10 @@ interface TriagemForm {
 }
 
 const EMPTY: TriagemForm = {
-  consultation_reason: '', main_complaints: [], other_complaint: '',
-  systemic_diseases: [], diabetes_duration: '', hypertension_duration: '',
+  consultation_reason: '', main_complaints: [],
+  other_consultation_reason: '',
+  other_main_complaints: '',
+  systemic_diseases: [], other_systemic_diseases: '', diabetes_duration: '', hypertension_duration: '',
   continuous_medications: [], other_medications: '',
   previous_eye_surgery: false, surgery_types: [], surgery_other: '', surgery_eye: '',
   eye_trauma: false, trauma_eye: '', trauma_time: '', trauma_description: '',
@@ -121,20 +125,45 @@ function AVSel({label, value, onChange}: {label: string; value: string; onChange
 }
 
 function NumF({label, value, onChange, ph='0.00'}: {label: string; value: string; onChange: (v: string) => void; ph?: string}) {
+  const formatDecimal = (raw: string) => {
+    const t = raw.trim()
+    const sign = t.startsWith('-') ? '-' : t.startsWith('+') ? '+' : ''
+    const digits = t.replace(/\D/g, '')
+    if (!digits) return sign === '-' ? '-' : ''
+    const padded = digits.padStart(3, '0')
+    const intRaw = padded.slice(0, -2)
+    const dec = padded.slice(-2)
+    const intPart = intRaw.replace(/^0+(?=\d)/, '') || '0'
+    return `${sign}${intPart},${dec}`
+  }
+
+  const formatInt = (raw: string) => {
+    const digits = raw.replace(/\D/g, '').slice(0, 3)
+    return digits
+  }
+
+  const kind: 'decimal' | 'int' = ph === '0' ? 'int' : 'decimal'
+
   return (
     <div>
       <label className="label">{label}</label>
-      <input type="number" step="0.01" value={value} onChange={e => onChange(e.target.value)}
-        placeholder={ph} className="input text-sm" />
+      <input
+        type="text"
+        inputMode={kind === 'int' ? 'numeric' : 'decimal'}
+        value={value}
+        onChange={e => onChange(kind === 'int' ? formatInt(e.target.value) : formatDecimal(e.target.value))}
+        placeholder={ph}
+        className="input text-sm"
+      />
     </div>
   )
 }
 
 function RRow({label, value}: {label: string; value: string}) {
   return (
-    <div className="flex gap-2 py-1 text-sm">
-      <span className="text-brand-600 font-medium shrink-0 w-44">{label}:</span>
-      <span className="text-slate-700">{value || '—'}</span>
+    <div className="grid grid-cols-1 sm:grid-cols-[170px_1fr] gap-0.5 sm:gap-3 py-2">
+      <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wide">{label}</p>
+      <p className="text-sm text-slate-800 break-words">{value || '—'}</p>
     </div>
   )
 }
@@ -148,6 +177,7 @@ export function Triagem() {
   const [selected, setSelected] = useState<VisitWithPatient | null>(null)
   const [mobileView, setMobileView] = useState<MobileView>('fila')
   const [tab, setTab] = useState<Tab>('motivo')
+  const contentRef = useRef<HTMLDivElement | null>(null)
   const [examSectionsOpen, setExamSectionsOpen] = useState(() => {
     const isMobile =
       typeof window !== 'undefined' &&
@@ -178,6 +208,10 @@ export function Triagem() {
 
   useEffect(() => { load() }, [])
 
+  useEffect(() => {
+    contentRef.current?.scrollTo({ top: 0, left: 0, behavior: 'auto' })
+  }, [tab, selected?.id, mobileView])
+
   const set = (key: keyof TriagemForm, value: unknown) =>
     setForm(f => ({...f, [key]: value}))
 
@@ -185,23 +219,68 @@ export function Triagem() {
     const arr = form[key] as string[]
     set(key, arr.includes(item) ? arr.filter(x => x !== item) : [...arr, item])
   }
+  const setReason = (r: string) => {
+    set('consultation_reason', r)
+    if (r !== 'Outros') set('other_consultation_reason', '')
+  }
+  const toggleComplaint = (c: string) => {
+    const arr = form.main_complaints
+    const next = arr.includes(c) ? arr.filter(x => x !== c) : [...arr, c]
+    set('main_complaints', next)
+    if (arr.includes(c) && c === 'Outros') set('other_main_complaints', '')
+  }
   const toggleExamSection = (key: keyof typeof examSectionsOpen) =>
     setExamSectionsOpen(s => ({ ...s, [key]: !s[key] }))
+  const toggleSystemicDisease = (d: string) => {
+    const arr = form.systemic_diseases
+    const next = arr.includes(d) ? arr.filter(x => x !== d) : [...arr, d]
+    set('systemic_diseases', next)
+    if (arr.includes(d) && d === 'Outras Doenças') set('other_systemic_diseases', '')
+    if (!arr.includes(d) && d === 'Nenhuma') {
+      set('diabetes_duration', '')
+      set('hypertension_duration', '')
+      set('other_systemic_diseases', '')
+    }
+  }
 
   const handleSave = async () => {
     if (!selected) return
     setSaving(true)
 
+    const parseDecimalPt = (v: string) => {
+      const s = v.trim()
+      if (!s || s === '-' || s === '+') return null
+      const n = Number(s.replace(/\./g, '').replace(',', '.'))
+      return Number.isFinite(n) ? n : null
+    }
+    const parseAxis = (v: string) => {
+      const s = v.replace(/\D/g, '')
+      if (!s) return null
+      const n = parseInt(s, 10)
+      if (!Number.isFinite(n)) return null
+      return Math.max(0, Math.min(180, n))
+    }
+
+    const reasonIsOther = form.consultation_reason === 'Outros'
+    const complaintsHasOther = form.main_complaints.includes('Outros')
+    const otherReason = reasonIsOther ? String(form.other_consultation_reason ?? '').trim() : ''
+    const otherComplaints = complaintsHasOther ? String(form.other_main_complaints ?? '').trim() : ''
+    const otherComplaint =
+      reasonIsOther && complaintsHasOther
+        ? (otherReason || otherComplaints ? `MR: ${otherReason}\nQP: ${otherComplaints}` : null)
+        : (otherReason || otherComplaints || null)
+
     const {error: tErr} = await supabase.from('triage').upsert({
       visit_id: selected.id,
       consultation_reason: form.consultation_reason,
       main_complaints: form.main_complaints,
-      other_complaint: form.other_complaint || null,
+      other_complaint: otherComplaint,
       systemic_diseases: form.systemic_diseases,
+      other_systemic_diseases: form.systemic_diseases.includes('Outras Doenças') ? (form.other_systemic_diseases || null) : null,
       diabetes_duration: form.diabetes_duration || null,
       hypertension_duration: form.hypertension_duration || null,
       continuous_medications: form.continuous_medications,
-      other_medications: form.other_medications || null,
+      other_medications: form.continuous_medications.includes('Outros Medicamentos') ? (form.other_medications || null) : null,
       previous_eye_surgery: form.previous_eye_surgery,
       eye_surgeries: form.previous_eye_surgery ? {types: form.surgery_types, other: form.surgery_other, eye: form.surgery_eye} : null,
       eye_trauma: form.eye_trauma,
@@ -210,12 +289,18 @@ export function Triagem() {
       drug_allergy_description: form.drug_allergy ? form.drug_allergy_description : null,
       av_od_cc: form.av_od_cc, av_od_sc: form.av_od_sc,
       av_oe_cc: form.av_oe_cc, av_oe_sc: form.av_oe_sc,
-      autorefractor_od: {spherical: form.autorefractor_od_spherical || null, cylindrical: form.autorefractor_od_cylindrical || null,
-        axis: form.autorefractor_od_axis || null, k1: form.autorefractor_od_k1 || null, k2: form.autorefractor_od_k2 || null},
-      autorefractor_oe: {spherical: form.autorefractor_oe_spherical || null, cylindrical: form.autorefractor_oe_cylindrical || null,
-        axis: form.autorefractor_oe_axis || null, k1: form.autorefractor_oe_k1 || null, k2: form.autorefractor_oe_k2 || null},
-      biometry_od_axial: form.biometry_od_axial ? parseFloat(form.biometry_od_axial) : null,
-      biometry_oe_axial: form.biometry_oe_axial ? parseFloat(form.biometry_oe_axial) : null,
+      autorefractor_od_spherical: parseDecimalPt(form.autorefractor_od_spherical),
+      autorefractor_od_cylindrical: parseDecimalPt(form.autorefractor_od_cylindrical),
+      autorefractor_od_axis: parseAxis(form.autorefractor_od_axis),
+      autorefractor_od_k1: parseDecimalPt(form.autorefractor_od_k1),
+      autorefractor_od_k2: parseDecimalPt(form.autorefractor_od_k2),
+      autorefractor_oe_spherical: parseDecimalPt(form.autorefractor_oe_spherical),
+      autorefractor_oe_cylindrical: parseDecimalPt(form.autorefractor_oe_cylindrical),
+      autorefractor_oe_axis: parseAxis(form.autorefractor_oe_axis),
+      autorefractor_oe_k1: parseDecimalPt(form.autorefractor_oe_k1),
+      autorefractor_oe_k2: parseDecimalPt(form.autorefractor_oe_k2),
+      biometry_od_axial: parseDecimalPt(form.biometry_od_axial),
+      biometry_oe_axial: parseDecimalPt(form.biometry_oe_axial),
       triage_notes: form.triage_notes || null,
     }, {onConflict: 'visit_id'})
 
@@ -331,7 +416,7 @@ export function Triagem() {
               </div>
 
               {/* Content */}
-              <div className="flex-1 overflow-auto scrollbar-thin p-4 sm:p-5">
+              <div ref={contentRef} className="flex-1 overflow-auto scrollbar-thin p-4 sm:p-5">
                 <div className="md:hidden -mt-1 mb-4">
                   <div className="flex gap-2 overflow-x-auto scrollbar-thin pb-2">
                     {[
@@ -363,12 +448,12 @@ export function Triagem() {
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
                         {REASONS.map(r => (
                           <RadItem key={r} label={r} checked={form.consultation_reason === r}
-                            onChange={() => set('consultation_reason', r)} />
+                            onChange={() => setReason(r)} />
                         ))}
                       </div>
                       {form.consultation_reason === 'Outros' && (
-                        <textarea value={form.other_complaint}
-                          onChange={e => set('other_complaint', e.target.value)}
+                        <textarea value={form.other_consultation_reason ?? ''}
+                          onChange={e => set('other_consultation_reason', e.target.value)}
                           placeholder="Descreva o motivo…" rows={2}
                           className="input mt-2 resize-none text-sm" />
                       )}
@@ -377,12 +462,12 @@ export function Triagem() {
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
                         {COMPLAINTS.map(c => (
                           <ChkItem key={c} label={c} checked={form.main_complaints.includes(c)}
-                            onChange={() => toggle('main_complaints', c)} />
+                            onChange={() => toggleComplaint(c)} />
                         ))}
                       </div>
                       {form.main_complaints.includes('Outros') && (
-                        <textarea value={form.other_complaint}
-                          onChange={e => set('other_complaint', e.target.value)}
+                        <textarea value={form.other_main_complaints ?? ''}
+                          onChange={e => set('other_main_complaints', e.target.value)}
                           placeholder="Outras queixas…" rows={2}
                           className="input mt-2 resize-none text-sm" />
                       )}
@@ -397,9 +482,20 @@ export function Triagem() {
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
                         {DISEASES.map(d => (
                           <ChkItem key={d} label={d} checked={form.systemic_diseases.includes(d)}
-                            onChange={() => toggle('systemic_diseases', d)} />
+                            onChange={() => toggleSystemicDisease(d)} />
                         ))}
                       </div>
+                      {form.systemic_diseases.includes('Outras Doenças') && (
+                        <div className="mt-2">
+                          <label className="label">Quais?</label>
+                          <input
+                            className="input text-sm"
+                            placeholder="Descreva as outras doenças"
+                            value={form.other_systemic_diseases}
+                            onChange={e => set('other_systemic_diseases', e.target.value)}
+                          />
+                        </div>
+                      )}
                       {form.systemic_diseases.includes('Diabetes') && (
                         <div className="mt-2">
                           <label className="label">Tempo de diabetes</label>
@@ -609,51 +705,166 @@ export function Triagem() {
                 {/* TAB 4 */}
                 {tab === 'resumo' && (
                   <div className="flex flex-col gap-4 max-w-2xl">
-                    <div className="p-5 rounded-xl bg-brand-50 border border-brand-100">
-                      <p className="text-sm font-semibold text-brand-800 mb-3 flex items-center gap-2">
+                    <div className="p-4 sm:p-5 rounded-xl bg-brand-50 border border-brand-100">
+                      <p className="text-sm font-semibold text-brand-800 flex items-center gap-2">
                         <CheckCircle2 size={15} className="text-brand-600" /> Resumo da Triagem
                       </p>
-                      <RRow label="Motivo" value={form.consultation_reason} />
-                      <RRow label="Queixas" value={form.main_complaints.join(', ')} />
-                      <RRow label="Doenças sistêmicas" value={form.systemic_diseases.join(', ') || 'Nenhuma'} />
-                      {form.diabetes_duration && <RRow label="Tempo diabetes" value={form.diabetes_duration} />}
-                      {form.hypertension_duration && <RRow label="Tempo hipertensão" value={form.hypertension_duration} />}
-                      <RRow label="Medicamentos" value={form.continuous_medications.join(', ') || 'Nenhum'} />
-                      <RRow label="Cirurgia ocular prévia" value={form.previous_eye_surgery ? `Sim — ${form.surgery_types.join(', ')} (${form.surgery_eye})` : 'Não'} />
-                      <RRow label="Trauma ocular" value={form.eye_trauma ? `Sim — ${form.trauma_eye} (${form.trauma_time})` : 'Não'} />
-                      <RRow label="Alergia medicamentosa" value={form.drug_allergy ? (form.drug_allergy_description || 'Sim') : 'Não'} />
-                      <div className="border-t border-brand-200 my-3" />
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">
-                        <RRow label="AV OD CC" value={form.av_od_cc} />
-                        <RRow label="AV OD SC" value={form.av_od_sc} />
-                        <RRow label="AV OE CC" value={form.av_oe_cc} />
-                        <RRow label="AV OE SC" value={form.av_oe_sc} />
-                      </div>
-                      {(form.autorefractor_od_spherical || form.autorefractor_oe_spherical) && (
-                        <>
-                          <div className="border-t border-brand-200 my-3" />
-                          <RRow label="Autoref. OD" value={`Esf ${form.autorefractor_od_spherical} / Cil ${form.autorefractor_od_cylindrical} / Eixo ${form.autorefractor_od_axis}°`} />
-                          <RRow label="Autoref. OE" value={`Esf ${form.autorefractor_oe_spherical} / Cil ${form.autorefractor_oe_cylindrical} / Eixo ${form.autorefractor_oe_axis}°`} />
-                        </>
-                      )}
-                      {(form.biometry_od_axial || form.biometry_oe_axial) && (
-                        <>
-                          <div className="border-t border-brand-200 my-3" />
-                          <RRow label="Biom. OD axial" value={form.biometry_od_axial ? `${form.biometry_od_axial} mm` : ''} />
-                          <RRow label="Biom. OE axial" value={form.biometry_oe_axial ? `${form.biometry_oe_axial} mm` : ''} />
-                        </>
-                      )}
-                      {form.triage_notes && (
-                        <>
-                          <div className="border-t border-brand-200 my-3" />
-                          <RRow label="Observações" value={form.triage_notes} />
-                        </>
-                      )}
+                      <p className="text-xs text-brand-700/80 mt-1">
+                        Revise antes de salvar e encaminhar para consulta.
+                      </p>
                     </div>
-                    <button onClick={handleSave} disabled={saving} className="btn-primary hidden md:inline-flex">
-                      <Save size={14} />
-                      {saving ? 'Salvando…' : 'Salvar Triagem e Encaminhar para Consulta'}
-                    </button>
+
+                    <div className="grid grid-cols-1 gap-4">
+                      <div className="card p-4 sm:p-5">
+                        <p className="section-title mb-3">Motivo e Queixas</p>
+                        <div className="divide-y divide-slate-100">
+                          <RRow
+                            label="Motivo"
+                            value={form.consultation_reason}
+                          />
+                          {form.consultation_reason === 'Outros' && (
+                            <RRow
+                              label="Motivo (descrição)"
+                              value={form.other_consultation_reason}
+                            />
+                          )}
+                          <RRow
+                            label="Queixas"
+                            value={form.main_complaints.filter(c => c !== 'Outros').join(', ') || form.main_complaints.join(', ')}
+                          />
+                          {form.main_complaints.includes('Outros') && (
+                            <RRow
+                              label="Queixas (outras)"
+                              value={form.other_main_complaints}
+                            />
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="card p-4 sm:p-5">
+                        <p className="section-title mb-3">Anamnese</p>
+                        <div className="divide-y divide-slate-100">
+                          <RRow
+                            label="Doenças sistêmicas"
+                            value={[
+                              form.systemic_diseases.join(', ') || 'Nenhuma',
+                              form.systemic_diseases.includes('Outras Doenças') && form.other_systemic_diseases
+                                ? `(${form.other_systemic_diseases})`
+                                : '',
+                            ].filter(Boolean).join(' ')}
+                          />
+                          <RRow label="Tempo diabetes" value={form.systemic_diseases.includes('Diabetes') ? form.diabetes_duration : ''} />
+                          <RRow label="Tempo hipertensão" value={form.systemic_diseases.includes('Hipertensão Arterial') ? form.hypertension_duration : ''} />
+                          <RRow
+                            label="Medicamentos"
+                            value={[
+                              form.continuous_medications.join(', ') || 'Nenhum',
+                              form.continuous_medications.includes('Outros Medicamentos') && form.other_medications
+                                ? `(${form.other_medications})`
+                                : '',
+                            ].filter(Boolean).join(' ')}
+                          />
+                        </div>
+                      </div>
+
+                      <div className="card p-4 sm:p-5">
+                        <p className="section-title mb-3">Histórico Ocular e Alergias</p>
+                        <div className="divide-y divide-slate-100">
+                          <RRow
+                            label="Cirurgia ocular"
+                            value={
+                              form.previous_eye_surgery
+                                ? [
+                                    `Sim — ${form.surgery_types.join(', ')}`,
+                                    form.surgery_types.includes('Outra') && form.surgery_other ? `Outra: ${form.surgery_other}` : '',
+                                    form.surgery_eye ? `(${form.surgery_eye})` : '',
+                                  ].filter(Boolean).join(' • ')
+                                : 'Não'
+                            }
+                          />
+                          <RRow
+                            label="Trauma ocular"
+                            value={
+                              form.eye_trauma
+                                ? [
+                                    form.trauma_eye,
+                                    form.trauma_time ? `(${form.trauma_time})` : '',
+                                    form.trauma_description ? `— ${form.trauma_description}` : '',
+                                  ].filter(Boolean).join(' ')
+                                : 'Não'
+                            }
+                          />
+                          <RRow
+                            label="Alergia medicamentosa"
+                            value={form.drug_allergy ? (form.drug_allergy_description || 'Sim') : 'Não'}
+                          />
+                        </div>
+                      </div>
+
+                      <div className="card p-4 sm:p-5">
+                        <p className="section-title mb-3">Exames</p>
+                        <div className="divide-y divide-slate-100">
+                          <div className="py-2">
+                            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Acuidade Visual</p>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6">
+                              <div className="divide-y divide-slate-100">
+                                <RRow label="OD CC" value={form.av_od_cc} />
+                                <RRow label="OD SC" value={form.av_od_sc} />
+                              </div>
+                              <div className="divide-y divide-slate-100">
+                                <RRow label="OE CC" value={form.av_oe_cc} />
+                                <RRow label="OE SC" value={form.av_oe_sc} />
+                              </div>
+                            </div>
+                          </div>
+
+                          {(form.autorefractor_od_spherical || form.autorefractor_od_cylindrical || form.autorefractor_od_axis || form.autorefractor_od_k1 || form.autorefractor_od_k2 ||
+                            form.autorefractor_oe_spherical || form.autorefractor_oe_cylindrical || form.autorefractor_oe_axis || form.autorefractor_oe_k1 || form.autorefractor_oe_k2) && (
+                            <div className="py-2">
+                              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Autorrefração</p>
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6">
+                                <div className="divide-y divide-slate-100">
+                                  <RRow label="OD Esf" value={form.autorefractor_od_spherical} />
+                                  <RRow label="OD Cil" value={form.autorefractor_od_cylindrical} />
+                                  <RRow label="OD Eixo" value={form.autorefractor_od_axis ? `${form.autorefractor_od_axis}°` : ''} />
+                                  <RRow label="OD K1" value={form.autorefractor_od_k1} />
+                                  <RRow label="OD K2" value={form.autorefractor_od_k2} />
+                                </div>
+                                <div className="divide-y divide-slate-100">
+                                  <RRow label="OE Esf" value={form.autorefractor_oe_spherical} />
+                                  <RRow label="OE Cil" value={form.autorefractor_oe_cylindrical} />
+                                  <RRow label="OE Eixo" value={form.autorefractor_oe_axis ? `${form.autorefractor_oe_axis}°` : ''} />
+                                  <RRow label="OE K1" value={form.autorefractor_oe_k1} />
+                                  <RRow label="OE K2" value={form.autorefractor_oe_k2} />
+                                </div>
+                              </div>
+                            </div>
+                          )}
+
+                          {(form.biometry_od_axial || form.biometry_oe_axial) && (
+                            <div className="py-2">
+                              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Biometria — Diâmetro Axial</p>
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6">
+                                <div className="divide-y divide-slate-100">
+                                  <RRow label="OD axial" value={form.biometry_od_axial ? `${form.biometry_od_axial} mm` : ''} />
+                                </div>
+                                <div className="divide-y divide-slate-100">
+                                  <RRow label="OE axial" value={form.biometry_oe_axial ? `${form.biometry_oe_axial} mm` : ''} />
+                                </div>
+                              </div>
+                            </div>
+                          )}
+
+                          {form.triage_notes && (
+                            <div className="py-2">
+                              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Observações</p>
+                              <p className="text-sm text-slate-800 whitespace-pre-wrap break-words">{form.triage_notes}</p>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
                   </div>
                 )}
               </div>

@@ -1,5 +1,6 @@
-import { useState } from 'react'
-import { UserCheck, AlertTriangle, CheckCircle2 } from 'lucide-react'
+import { useMemo, useState } from 'react'
+import * as Dialog from '@radix-ui/react-dialog'
+import { UserCheck, AlertTriangle, CheckCircle2, Plus, RefreshCw, X } from 'lucide-react'
 import { PageLayout } from '@/components/PageLayout'
 import { DropZone } from '@/components/DropZone'
 import { useToast } from '@/lib/toast'
@@ -33,6 +34,17 @@ export function Paciente() {
   const [visitType, setVisitType]     = useState<VisitType>('primeira_consulta')
   const [ociSubtype, setOciSubtype]   = useState<OciSubtype>('avaliacao_0_8')
   const [saving, setSaving]           = useState(false)
+  const [manualOpen, setManualOpen]   = useState(false)
+  const [manualName, setManualName]   = useState('')
+  const [manualCpf, setManualCpf]     = useState('')
+  const [manualBirth, setManualBirth] = useState('')
+  const [manualMother, setManualMother] = useState('')
+  const [manualExisting, setManualExisting] = useState<Patient | null>(null)
+  const [manualVisitType, setManualVisitType] = useState<VisitType>('primeira_consulta')
+  const [manualOciSubtype, setManualOciSubtype] = useState<OciSubtype>('avaliacao_0_8')
+  const [manualSaving, setManualSaving] = useState(false)
+
+  const manualCpfDigits = useMemo(() => manualCpf.replace(/\D/g, ''), [manualCpf])
 
   const handleFile = async (file: File) => {
     setExtracting(true)
@@ -68,16 +80,41 @@ export function Paciente() {
     setExtracting(false)
   }
 
+  const resetManual = () => {
+    setManualName('')
+    setManualCpf('')
+    setManualBirth('')
+    setManualMother('')
+    setManualExisting(null)
+    setManualVisitType('primeira_consulta')
+    setManualOciSubtype('avaliacao_0_8')
+  }
+
+  const findPatientByCpf = async (cpfDigits: string) => {
+    if (!cpfDigits) return null
+    const { data: found } = await supabase
+      .from('patients')
+      .select('*')
+      .eq('cpf', cpfDigits)
+      .maybeSingle()
+    return (found as Patient | null) ?? null
+  }
+
+  const addVisit = async (patient: Patient, type: VisitType, subtype: OciSubtype) => {
+    const { error } = await supabase.from('visits').insert({
+      patient_id: patient.id,
+      visit_type: type,
+      oci_subtype: type === 'oci' ? subtype : null,
+      status: 'triagem',
+    })
+    return { ok: !error, error }
+  }
+
   const addVisitToExistingPatient = async () => {
     if (!existingPatient) return
     setSaving(true)
-    const { error } = await supabase.from('visits').insert({
-      patient_id:  existingPatient.id,
-      visit_type:  visitType,
-      oci_subtype: visitType === 'oci' ? ociSubtype : null,
-      status:      'triagem',
-    })
-    if (error) {
+    const res = await addVisit(existingPatient, visitType, ociSubtype)
+    if (!res.ok) {
       toast('Erro ao adicionar atendimento', 'error')
     } else {
       toast(`Novo atendimento adicionado para ${existingPatient.name}`, 'success')
@@ -132,6 +169,236 @@ export function Paciente() {
     <PageLayout
       title="Paciente"
       subtitle="Cadastro de pacientes via PDF do sistema AVYX"
+      actions={
+        <Dialog.Root
+          open={manualOpen}
+          onOpenChange={open => {
+            setManualOpen(open)
+            if (open) resetManual()
+          }}
+        >
+          <Dialog.Trigger asChild>
+            <button type="button" className="btn-primary">
+              <Plus size={14} />
+              Paciente
+            </button>
+          </Dialog.Trigger>
+
+          <Dialog.Portal>
+            <Dialog.Overlay className="fixed inset-0 z-50 bg-black/50" />
+            <Dialog.Content className="fixed z-50 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[92vw] max-w-lg rounded-2xl bg-white border border-slate-200 shadow-xl">
+              <div className="p-5 border-b border-slate-100 flex items-start gap-3">
+                <div className="w-10 h-10 rounded-xl bg-brand-50 flex items-center justify-center shrink-0 border border-brand-200">
+                  <Plus size={18} className="text-brand-700" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <Dialog.Title className="font-display font-semibold text-slate-900">
+                    Novo paciente
+                  </Dialog.Title>
+                  <Dialog.Description className="text-xs text-slate-500">
+                    Cadastre manualmente e já crie um atendimento em triagem.
+                  </Dialog.Description>
+                </div>
+                <Dialog.Close asChild>
+                  <button className="btn-ghost p-2 min-h-0" aria-label="Fechar">
+                    <X size={16} />
+                  </button>
+                </Dialog.Close>
+              </div>
+
+              <form
+                className="p-5 flex flex-col gap-4"
+                onSubmit={async e => {
+                  e.preventDefault()
+                  const cpf = manualCpfDigits
+                  const name = manualName.trim()
+                  if (!name || !cpf) { toast('Nome e CPF são obrigatórios', 'error'); return }
+                  if (cpf.length !== 11) { toast('CPF inválido', 'error'); return }
+                  setManualSaving(true)
+                  try {
+                    const existing = manualExisting ?? (await findPatientByCpf(cpf))
+                    if (existing) {
+                      const res = await addVisit(existing, manualVisitType, manualOciSubtype)
+                      if (!res.ok) {
+                        toast('Erro ao adicionar atendimento', 'error')
+                        return
+                      }
+                      toast(`Novo atendimento adicionado para ${existing.name}`, 'success')
+                      setManualOpen(false)
+                      return
+                    }
+
+                    const { data: newPatient, error: pError } = await supabase
+                      .from('patients')
+                      .insert({
+                        name,
+                        cpf,
+                        birth_date: manualBirth || null,
+                        mother_name: manualMother.trim() || null,
+                      })
+                      .select()
+                      .single()
+
+                    if (pError) {
+                      toast('Erro ao cadastrar paciente: ' + pError.message, 'error')
+                      return
+                    }
+
+                    const res = await addVisit(newPatient as Patient, manualVisitType, manualOciSubtype)
+                    if (!res.ok) {
+                      toast('Paciente cadastrado, mas erro ao criar atendimento.', 'error')
+                      return
+                    }
+                    toast('Paciente cadastrado com sucesso', 'success')
+                    setManualOpen(false)
+                  } finally {
+                    setManualSaving(false)
+                  }
+                }}
+              >
+                {manualExisting && (
+                  <div className="flex gap-2.5 p-3 rounded-lg bg-amber-50 border border-amber-200">
+                    <AlertTriangle size={15} className="text-amber-600 shrink-0 mt-0.5" />
+                    <div className="text-sm">
+                      <p className="font-medium text-amber-800">CPF já cadastrado</p>
+                      <p className="text-amber-700 mt-0.5 text-xs">
+                        {manualExisting.name} — CPF {formatCPF(manualExisting.cpf)}
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="sm:col-span-2">
+                    <label className="label">Nome</label>
+                    <input
+                      className="input"
+                      value={manualExisting ? manualExisting.name : manualName}
+                      onChange={e => setManualName(e.target.value)}
+                      disabled={!!manualExisting}
+                      placeholder="Nome completo"
+                    />
+                  </div>
+                  <div>
+                    <label className="label">CPF</label>
+                    <input
+                      className="input"
+                      inputMode="numeric"
+                      value={manualCpf}
+                      onChange={e => {
+                        setManualCpf(e.target.value)
+                        setManualExisting(null)
+                      }}
+                      onBlur={async () => {
+                        const cpf = manualCpfDigits
+                        if (cpf.length !== 11) return
+                        const found = await findPatientByCpf(cpf)
+                        if (found) {
+                          setManualExisting(found)
+                          toast(`Paciente com CPF ${formatCPF(cpf)} já está cadastrado.`, 'info')
+                        }
+                      }}
+                      placeholder="Somente números"
+                    />
+                  </div>
+                  <div>
+                    <label className="label">Nascimento</label>
+                    <input
+                      className="input"
+                      type="date"
+                      value={manualExisting ? (manualExisting.birth_date ?? '') : manualBirth}
+                      onChange={e => setManualBirth(e.target.value)}
+                      disabled={!!manualExisting}
+                    />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className="label">Nome da mãe</label>
+                    <input
+                      className="input"
+                      value={manualExisting ? (manualExisting.mother_name ?? '') : manualMother}
+                      onChange={e => setManualMother(e.target.value)}
+                      disabled={!!manualExisting}
+                      placeholder="Opcional"
+                    />
+                  </div>
+                </div>
+
+                <div className="divider" />
+
+                <div>
+                  <label className="label">Tipo de Atendimento</label>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                    {VISIT_TYPES.map(({ value, label }) => (
+                      <label
+                        key={value}
+                        className={`flex items-center gap-2 px-2.5 py-2 rounded-lg border cursor-pointer transition-colors ${
+                          manualVisitType === value
+                            ? 'border-brand-400 bg-brand-50'
+                            : 'border-slate-200 hover:border-slate-300 bg-white'
+                        }`}
+                      >
+                        <input
+                          type="radio"
+                          name="manual_visit_type"
+                          value={value}
+                          checked={manualVisitType === value}
+                          onChange={() => setManualVisitType(value)}
+                          className="accent-brand-600"
+                        />
+                        <span className={`text-xs leading-tight ${manualVisitType === value ? 'text-brand-800 font-medium' : 'text-slate-700'}`}>
+                          {label}
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+
+                {manualVisitType === 'oci' && (
+                  <div className="animate-fade-in">
+                    <label className="label">Subtipo OCI</label>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                      {OCI_SUBTYPES.map(({ value, label }) => (
+                        <label
+                          key={value}
+                          className={`flex items-center gap-2 px-2.5 py-2 rounded-lg border cursor-pointer transition-colors ${
+                            manualOciSubtype === value
+                              ? 'border-brand-400 bg-brand-50'
+                              : 'border-slate-200 hover:border-slate-300 bg-white'
+                          }`}
+                        >
+                          <input
+                            type="radio"
+                            name="manual_oci_subtype"
+                            value={value}
+                            checked={manualOciSubtype === value}
+                            onChange={() => setManualOciSubtype(value)}
+                            className="accent-brand-600"
+                          />
+                          <span className={`text-xs leading-tight ${manualOciSubtype === value ? 'text-brand-800 font-medium' : 'text-slate-700'}`}>
+                            {label}
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex items-center justify-end gap-2 pt-1">
+                  <Dialog.Close asChild>
+                    <button type="button" className="btn-secondary" disabled={manualSaving}>
+                      Cancelar
+                    </button>
+                  </Dialog.Close>
+                  <button type="submit" className="btn-primary" disabled={manualSaving}>
+                    {manualSaving && <RefreshCw size={14} className="animate-spin" />}
+                    {manualExisting ? 'Adicionar atendimento' : 'Cadastrar'}
+                  </button>
+                </div>
+              </form>
+            </Dialog.Content>
+          </Dialog.Portal>
+        </Dialog.Root>
+      }
     >
       <div className="max-w-md mx-auto flex flex-col gap-4">
 
