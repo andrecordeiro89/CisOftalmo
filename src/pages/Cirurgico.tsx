@@ -6,6 +6,7 @@ import { PageLayout } from '@/components/PageLayout'
 import { SurgicalDocumentHtml } from '@/components/SurgicalDocumentHtml'
 import { useToast } from '@/lib/toast'
 import { supabase } from '@/lib/supabase'
+import { buildProcessoCirurgicoPdf } from '@/lib/processoCirurgicoPdf'
 
 type SurgicalCaseRow = {
   id: string
@@ -279,15 +280,6 @@ export function Cirurgico() {
     return rows.slice().sort(byTime)
   }, [cases, escalaDate])
 
-  const escapeHtml = (s: string) => {
-    return s
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#39;')
-  }
-
   const buildTermDefaults = (c: SurgicalCaseRow): ConsentTerm => {
     const p = Array.isArray(c.patient) ? c.patient[0] : c.patient
     const defaultHospital = (() => {
@@ -458,8 +450,8 @@ export function Cirurgico() {
   }
 
   const saveDocument = async () => {
-    if (!docCase) return false
-    if (docSaving) return false
+    if (!docCase) return null
+    if (docSaving) return null
     setDocSaving(true)
     try {
       const payload = buildDocPayload(docCase, docTerm, docChecklist, sigDoctor, sigPatient, sigWitness, formState)
@@ -467,11 +459,11 @@ export function Cirurgico() {
 
       if (error) {
         toast('Erro ao salvar documento: ' + error.message, 'error')
-        return false
+        return null
       }
       toast('Documento salvo.', 'success')
       lastSavedHashRef.current = JSON.stringify(payload)
-      return true
+      return payload
     } finally {
       setDocSaving(false)
     }
@@ -501,207 +493,23 @@ export function Cirurgico() {
     }
   }, [docOpen, docLoading, docCase, docTerm, docChecklist, sigDoctor, sigPatient, sigWitness, formState])
 
-  const printPdf = async () => {
-    const ok = await saveDocument()
-    if (!ok) return
-    const yn = (k: string) => {
-      const v = (formState as any)?.[k]
-      if (v === 'sim') return 'Sim'
-      if (v === 'nao') return 'Não'
-      return ''
-    }
-    const ck = (k: string) => ((formState as any)?.[k] === true ? '☑' : '☐')
-    const tx = (k: string) => {
-      const v = (formState as any)?.[k]
-      return typeof v === 'string' ? v : ''
-    }
-    const img = (dataUrl: string) => dataUrl ? `<img src="${dataUrl}" style="width:100%;height:100%;object-fit:contain;"/>` : ''
-
-    const safetySections = [
-      {
-        id: 'prep',
-        title: '1. Sala de preparação do paciente',
-        items: [
-          { id: 'identificacao', label: 'Identificação do paciente conferida (nome e data de nascimento)' },
-          { id: 'procedimento_olho', label: 'Confirmação do procedimento e olho a ser operado' },
-          { id: 'consentimento', label: 'Consentimento cirúrgico assinado pelo paciente e acompanhante' },
-          { id: 'alergias', label: 'Verificação de alergias (medicamentos / látex)' },
-          { id: 'jejum', label: 'Avaliação de jejum confirmada' },
-          { id: 'coque', label: 'Verificação de coque no cabelo do paciente, ok' },
-        ],
-      },
-      {
-        id: 'sala_antes',
-        title: '2. Sala cirúrgica — antes do procedimento',
-        items: [
-          { id: 'posicionamento', label: 'Paciente posicionado adequadamente na mesa cirúrgica' },
-          { id: 'pvpi', label: 'Campo operatório limpo e preparado com PVPI' },
-          { id: 'equipamentos', label: 'Equipamentos revisados (microscópio, faco)' },
-          { id: 'materiais', label: 'Materiais estéreis disponíveis e dentro do prazo de validade' },
-          { id: 'sitio', label: 'Sítio cirúrgico marcado e confirmado (OD/OE)' },
-          { id: 'lio', label: 'Lente intraocular conferida (modelo, dioptria, lote, validade)' },
-          { id: 'equipe_confirma', label: 'Cirurgião e equipe confirmam o procedimento' },
-          { id: 'pressao', label: 'Pressão arterial e sinais verificados' },
-        ],
-      },
-      {
-        id: 'pausa',
-        title: '3. Pausa cirúrgica — imediatamente antes da incisão',
-        items: [
-          { id: 'apresentacao', label: 'Equipe se apresenta e confirma papéis' },
-          { id: 'confirmacao_verbal', label: 'Confirmação verbal do paciente, olho e tipo de cirurgia' },
-          { id: 'cirurgiao_confirma_lio', label: 'Cirurgião confirma tipo de LIO e técnica cirúrgica' },
-          { id: 'equipamentos_ok', label: 'Equipamentos funcionando corretamente' },
-          { id: 'campo_esteril', label: 'Campo operatório mantido estéril' },
-          { id: 'sem_duvidas', label: 'Não há dúvidas pendentes antes do início' },
-        ],
-      },
-      {
-        id: 'apos',
-        title: '4. Após o procedimento (final da cirurgia)',
-        items: [
-          { id: 'contagem', label: 'Contagem de instrumentais e campos conferida' },
-          { id: 'integridade_lio', label: 'Integridade da lente intraocular implantada confirmada' },
-          { id: 'incisao', label: 'Incisão autosselante e olho protegido com curativo' },
-          { id: 'med_topica', label: 'Medicação tópica instilada (antibiótico/anti-inflamatório)' },
-          { id: 'estavel', label: 'Paciente consciente e hemodinamicamente estável' },
-          { id: 'registro_lio', label: 'Registro do modelo e dioptria da LIO no prontuário e cartão' },
-          { id: 'orientacoes', label: 'Orientações de alta pós-operatória entregues ao paciente' },
-        ],
-      },
-    ]
-
-    const safetyHtml = safetySections.map(sec => {
-      const items = sec.items.map(it => {
-        const key = `safety_${sec.id}_${it.id}`
-        return `<tr><td style="padding:6px 8px;border:1px solid #e2e8f0;">${escapeHtml(it.label)}</td><td style="padding:6px 8px;border:1px solid #e2e8f0;width:90px;text-align:center;">${escapeHtml(yn(key))}</td></tr>`
-      }).join('')
-      return `<div style="margin-top:14px;"><div style="font-weight:700;margin-bottom:6px;">${escapeHtml(sec.title)}</div><table style="width:100%;border-collapse:collapse;font-size:12px;">${items}</table></div>`
-    }).join('')
-
-    const html = `
-      <!doctype html>
-      <html>
-        <head>
-          <meta charset="utf-8" />
-          <meta name="viewport" content="width=device-width, initial-scale=1" />
-          <title>Documento</title>
-          <style>
-            @page { size: A4; margin: 12mm; }
-            body { font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial; color: #0f172a; }
-            h1 { font-size: 14px; margin: 0 0 10px; }
-            h2 { font-size: 13px; margin: 14px 0 8px; }
-            p { font-size: 12px; line-height: 1.5; margin: 8px 0; }
-            .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-            .box { border: 1px solid #e2e8f0; border-radius: 10px; padding: 10px; }
-            .k { font-size: 10px; color: #64748b; margin: 0; }
-            .v { font-size: 12px; font-weight: 600; margin: 4px 0 0; }
-            .sig { border: 1px solid #e2e8f0; border-radius: 10px; height: 120px; overflow: hidden; background: #fff; }
-            .pagebreak { page-break-after: always; }
-          </style>
-        </head>
-        <body>
-          <h1>TERMO DE CONSENTIMENTO E ENTENDIMENTO PRÉ-CIRÚRGICO</h1>
-          <p>Eu, <b>${escapeHtml(docTerm.nome || '')}</b>, portador do <b>${escapeHtml(docTerm.cpf || '')}</b>, <b>${escapeHtml(docTerm.data_nascimento || '')}</b>, aceito voluntária e plenamente o tratamento médico cirúrgico proposto e solicitado pelo <b>${escapeHtml(docTerm.medico || '')}</b>, e sua equipe, para tratar da minha saúde atual conforme julgarem necessário, em procedimento cirúrgico a ser realizado no <b>${escapeHtml(docTerm.hospital || '')}</b> no dia <b>${escapeHtml(docTerm.data || '')}</b>.</p>
-          <p>Tenho pleno conhecimento e estou ciente de que o procedimento cirúrgico foi planejado especificamente para o meu caso e, de maneira voluntária, consinto e autorizo sua realização, sendo este procedimento <b>${escapeHtml(docTerm.cirurgia || '')}</b> em <b>${escapeHtml(docTerm.olho || '')}</b>.</p>
-          <p>Entendo que meu médico possa encontrar diferentes condições que requeiram um procedimento adicional ou até mesmo diferente do planejado, portanto, autorizo sua realização na medida que julgarem necessária, deste novo e/ou adicional procedimento.</p>
-          <p>Declaro estar ciente de que a lente intraocular disponibilizada pelo Sistema Único de Saúde (SUS) possui finalidade exclusiva de tratamento da catarata, sendo uma lente monofocal, não destinada à correção completa de erros refrativos, podendo haver necessidade de uso de óculos após o procedimento.</p>
-          <div class="grid" style="margin-top:12px;">
-            <div><div class="k" style="margin-bottom:6px;">PACIENTE</div><div class="sig">${img(sigPatient)}</div></div>
-            <div><div class="k" style="margin-bottom:6px;">TESTEMUNHA</div><div class="sig">${img(sigWitness)}</div></div>
-          </div>
-          <div style="margin-top:12px;"><div class="k" style="margin-bottom:6px;">CARIMBO MÉDICO</div><div class="sig">${img(sigDoctor)}</div></div>
-
-          <div class="pagebreak"></div>
-          <h2>FICHA DE TRIAGEM PRÉ CIRÚRGICA (FACOEMULCIFICAÇÃO)</h2>
-          <p><b>Paciente:</b> ${escapeHtml(docTerm.nome || '')} &nbsp; <b>Data:</b> ${escapeHtml(docTerm.data || '')}</p>
-          <p><b>PA:</b> ${escapeHtml(tx('triagem_pa'))} &nbsp; <b>Hora:</b> ${escapeHtml(tx('triagem_hora'))} &nbsp; <b>HGT:</b> ${escapeHtml(tx('triagem_hgt'))}</p>
-          <p><b>Alergias:</b> ${escapeHtml(yn('triagem_alergias'))} &nbsp; <b>A que:</b> ${escapeHtml(tx('triagem_alergias_que'))}</p>
-          <p>${ck('triagem_jejum_ok')} Paciente confirmou jejum e estar acompanhado de um maior de idade que se responsabiliza pelo pós-operatório.</p>
-          <p><b>Patologias:</b> HAS ${escapeHtml(yn('triagem_has'))} · DM ${escapeHtml(yn('triagem_dm'))} · Disfunção cardíaca ${escapeHtml(yn('triagem_cardio'))} · Anti-coagulante ${escapeHtml(yn('triagem_anticoag'))}</p>
-          <p><b>Outras:</b> ${escapeHtml(tx('triagem_outras'))}</p>
-          <div style="margin-top:12px;"><div class="k" style="margin-bottom:6px;">ASSINATURA DO AVALIADOR</div><div class="sig">${img(tx('triagem_assinatura_avaliador'))}</div></div>
-
-          <div class="pagebreak"></div>
-          <h2>PRESCRIÇÃO MÉDICA / ASSINATURA — RELATÓRIO MÉDICO</h2>
-          <p><b>Paciente:</b> ${escapeHtml(docTerm.nome || '')} &nbsp; <b>CPF:</b> ${escapeHtml(docTerm.cpf || '')} &nbsp; <b>Nascimento:</b> ${escapeHtml(docTerm.data_nascimento || '')}</p>
-          <p><b>Data cirurgia:</b> ${escapeHtml(docTerm.data || '')} &nbsp; <b>Olho:</b> ${escapeHtml(docTerm.olho || '')}</p>
-          <p>1 — JEJUM VO. (*MANTER*)</p>
-          <p>Pós operatório imediato de facoemulsificação com implante de lente intra ocular dobrável em olho ${escapeHtml(docTerm.olho || '')} sem sidel. LIO tópica. Sem sinais de infecção. Paciente segue de Alta, com retorno agendado.</p>
-          <p>2 — AFERIÇÃO DE SSVV E ESTADO CLÍNICO GERAL. (*VERIFICAR*)</p>
-          <p>3 — AFERIÇÃO (GLICEMIA CAPILAR) COMUNICAR SE MAIOR QUE 200. (*VERIFICAR*)</p>
-          <p>4 — HIGIENIZAÇÃO DAS MÃOS A CADA 30 MIN. (*PROMOVER*)</p>
-          <p>5 — Fenilefrina colírio 10% - pingar uma gota no olho ${escapeHtml(docTerm.olho || '')}.</p>
-          <p>5 — Diazepan 5 MG CP VO 30 MIN ANTES PROCEDIMENTO.</p>
-          <p>6 — Colírio tropicamida 0,1% 1gt de 5/5 min no olho ${escapeHtml(docTerm.olho || '')} até o procedimento.</p>
-          <p>7 — Diamox 250MG 1CP VO após a cirurgia.</p>
-          <p><b>Evolução clínica:</b> ${escapeHtml(tx('presc_evolucao'))}</p>
-          <div class="grid" style="margin-top:12px;">
-            <div><div class="k" style="margin-bottom:6px;">Carimbo do médico (1)</div><div class="sig">${img(tx('presc_carimbo_1'))}</div></div>
-            <div><div class="k" style="margin-bottom:6px;">Carimbo do médico (2)</div><div class="sig">${img(tx('presc_carimbo_2'))}</div></div>
-          </div>
-
-          <div class="pagebreak"></div>
-          <h2>CHECKLIST DE CIRURGIA SEGURA — CIRURGIA DE CATARATA</h2>
-          <p><b>Paciente:</b> ${escapeHtml(docTerm.nome || '')} &nbsp; <b>Data:</b> ${escapeHtml(docTerm.data || '')} &nbsp; <b>Olho:</b> ${escapeHtml(docTerm.olho || '')}</p>
-          ${safetyHtml}
-          <div class="grid" style="margin-top:12px;">
-            <div><div class="k" style="margin-bottom:6px;">Assinatura — médico</div><div class="sig">${img(tx('checklist_sig_medico'))}</div></div>
-            <div><div class="k" style="margin-bottom:6px;">Assinatura — circulante</div><div class="sig">${img(tx('checklist_sig_circulante'))}</div></div>
-          </div>
-
-          <div class="pagebreak"></div>
-          <h2>REGISTRO CIRÚRGICO</h2>
-          <p><b>Paciente:</b> ${escapeHtml(docTerm.nome || '')} &nbsp; <b>Nascimento:</b> ${escapeHtml(docTerm.data_nascimento || '')} &nbsp; <b>CPF:</b> ${escapeHtml(docTerm.cpf || '')}</p>
-          <p><b>Data:</b> ${escapeHtml(docTerm.data || '')} &nbsp; <b>Operador:</b> ${escapeHtml(docTerm.medico || '')}</p>
-          <p><b>Instrumentador:</b> ${escapeHtml(docTerm.INSTRUMENTADOR || '')} &nbsp; <b>Anestesista:</b> ${escapeHtml(tx('cir_anestesista'))}</p>
-          <p><b>Tipo anestesia:</b> ${escapeHtml(docTerm.ANESTESIA || '')} &nbsp; <b>Olho:</b> ${escapeHtml(docTerm.olho || '')}</p>
-          <p><b>Etiqueta LIO:</b> ${escapeHtml(tx('cir_etiqueta_lio'))}</p>
-          <p><b>Diagnóstico pré:</b> Catarata &nbsp; <b>Tipo de operação:</b> ${escapeHtml(docTerm.cirurgia || '')} &nbsp; <b>Diagnóstico pós:</b> Pseudofacia</p>
-          <p><b>Intercorrências:</b> ${ck('cir_intercorrencia_nao')} Não ${ck('cir_intercorrencia_sim')} Sim &nbsp; <b>Qual:</b> ${escapeHtml(tx('cir_intercorrencia_qual'))}</p>
-          <p><b>Descrição da operação:</b> Assepsia/antissepsia + campos estéreis; incisão principal + paracenteses; azul de tripan; xilocaína com adrenalina; metilcelulose 2%; capsulorrexis; hidrodissécação/hidrodelineação; facoemulsificação; aspiração de restos corticais; implante de LIO; aspiração de viscoelástico + sutura aquosa; cefuroxima + Vigamox; protetor acrílico.</p>
-          <p><b>Observações adicionais:</b> ${escapeHtml(tx('descop_observacoes'))}</p>
-          <div class="grid" style="margin-top:12px;">
-            <div><div class="k" style="margin-bottom:6px;">Carimbo médico (1)</div><div class="sig">${img(tx('descop_carimbo_1'))}</div></div>
-            <div><div class="k" style="margin-bottom:6px;">Carimbo médico (2)</div><div class="sig">${img(tx('descop_carimbo_2'))}</div></div>
-          </div>
-          <div style="margin-top:12px;"><div class="k" style="margin-bottom:6px;">Carimbo médico (3)</div><div class="sig">${img(tx('descop_carimbo_3'))}</div></div>
-
-          <div class="pagebreak"></div>
-          <h2>RELATÓRIO DE ENFERMAGEM — INTRAOPERATÓRIO</h2>
-          <p><b>Início:</b> ${escapeHtml(tx('enf_inicio'))} &nbsp; <b>Término:</b> ${escapeHtml(tx('enf_termino'))} &nbsp; <b>Sexo:</b> ${escapeHtml(tx('enf_sexo') || docTerm.sexo || '')}</p>
-          <p><b>Instrumentador:</b> ${escapeHtml(docTerm.INSTRUMENTADOR || '')} &nbsp; <b>Circulante:</b> ${escapeHtml(docTerm.CIRCULANTE || '')}</p>
-          <p><b>Tipo anestesia:</b> ${escapeHtml(docTerm.ANESTESIA || '')} &nbsp; ${ck('enf_sedacao_realizada')} Sedação</p>
-          <p><b>Olho operado:</b> ${escapeHtml(docTerm.olho || '')} &nbsp; <b>Etiqueta LIO:</b> ${escapeHtml(tx('enf_etiqueta_lio'))}</p>
-          <p><b>Técnica:</b> ${ck('enf_tecnica_faco')} Facoemulsificação ${ck('enf_tecnica_eec')} EEC &nbsp; <b>Outro:</b> ${escapeHtml(tx('enf_tecnica_outro'))}</p>
-          <p><b>Medicamentos:</b> ${ck('enf_med_carbacol')} Carbacol ${ck('enf_med_azul_tripan')} Azul de Tripan &nbsp; <b>Outro:</b> ${escapeHtml(tx('enf_med_outro'))}</p>
-          <p><b>ATB intracamaral:</b> ${ck('enf_atb_cefuroxima')} Cefuroxima &nbsp; <b>Outro:</b> ${escapeHtml(tx('enf_atb_outro'))}</p>
-          <p><b>Intercorrências:</b> ${ck('enf_intercorrencia_nao')} Não houve ${ck('enf_intercorrencia_sim')} Sim &nbsp; <b>Descrever:</b> ${escapeHtml(tx('enf_intercorrencia_desc'))}</p>
-          <p><b>Finalização:</b> Contagem ${escapeHtml(yn('enf_final_contagem'))} · Integridade LIO ${escapeHtml(yn('enf_final_integridade_lio'))} · Curativo ${escapeHtml(yn('enf_final_curativo'))} · Encaminhado ${escapeHtml(yn('enf_final_encaminhado'))}</p>
-          <p><b>Condição saída:</b> ${ck('enf_saida_estavel')} Estável ${ck('enf_saida_sonolento')} Sonolento &nbsp; <b>Outras:</b> ${escapeHtml(tx('enf_saida_outras'))}</p>
-          <div style="margin-top:12px;"><div class="k" style="margin-bottom:6px;">Carimbo/assinatura — circulante</div><div class="sig">${img(tx('enf_carimbo_circulante'))}</div></div>
-
-          <div class="pagebreak"></div>
-          <h2>FOLHA DE RASTREABILIDADE E CONTROLE DE ESTERELIZAÇÃO</h2>
-          <p><b>Paciente:</b> ${escapeHtml(docTerm.nome || '')} &nbsp; <b>Data:</b> ${escapeHtml(docTerm.data || '')} &nbsp; <b>Olho:</b> ${escapeHtml(docTerm.olho || '')}</p>
-          <p><b>Caixa cirúrgica:</b> ${escapeHtml(tx('ester_caixa'))}</p>
-          <p><b>Etiqueta identificação caixa cirúrgica:</b> ${escapeHtml(tx('ester_etiqueta'))}</p>
-          <p>${ck('ester_integrador_5')} Integrador químico classe 5 presente/ok</p>
-          <div style="margin-top:12px;"><div class="k" style="margin-bottom:6px;">Carimbo circulante</div><div class="sig">${img(tx('ester_carimbo_circulante'))}</div></div>
-        </body>
-      </html>
-    `
-
-    const w = window.open('', '_blank')
-    if (!w) {
-      toast('Permita pop-ups para baixar o PDF.', 'error')
-      return
-    }
-    w.document.open()
-    w.document.write(html)
-    w.document.close()
-    w.focus()
-    setTimeout(() => w.print(), 350)
+  const downloadPdf = async () => {
+    const payload = await saveDocument()
+    if (!payload) return
+    const out = await buildProcessoCirurgicoPdf({
+      term: payload.term,
+      signatures: payload.signatures as any,
+      formState: payload.form_state as any,
+    })
+    const blob = new Blob([out as any], { type: 'application/pdf' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    const safeName = (docTerm.nome || 'documento').replace(/[\\/:*?"<>|]+/g, ' ').trim()
+    a.download = `processo_cirurgico_${safeName || 'documento'}.pdf`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000)
   }
 
   const markPresence = async (c: SurgicalCaseRow) => {
@@ -1589,9 +1397,9 @@ export function Cirurgico() {
               <button
                 type="button"
                 className="btn-primary"
-                onClick={printPdf}
+                onClick={downloadPdf}
                 disabled={docSaving || autoSaving || docLoading || !docCase}
-                title="Salvar e abrir impressão para baixar PDF"
+                title="Baixar PDF no layout do modelo"
               >
                 <FileText size={14} />
                 Baixar PDF
