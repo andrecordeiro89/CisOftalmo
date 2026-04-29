@@ -11,8 +11,8 @@ const nav = [
   { to: '/recepcao',    label: 'Recepção',         icon: LayoutDashboard },
   { to: '/triagem',     label: 'Triagem',          icon: ClipboardList   },
   { to: '/consulta',    label: 'Consulta Médica',  icon: Stethoscope     },
-  { to: '/agendamento', label: 'Agendamento',      icon: CalendarDays    },
   { to: '/cirurgico',   label: 'Cirúrgico',        icon: Scissors        },
+  { to: '/agendamento', label: 'Agendamento',      icon: CalendarDays    },
 ]
 
 export function Sidebar({
