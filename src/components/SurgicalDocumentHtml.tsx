@@ -116,6 +116,38 @@ export function SurgicalDocumentHtml({
   const getText = (key: string) => strValue(formState[key])
   const getBool = (key: string) => boolValue(formState[key])
   const getYesNo = (key: string) => yesNoValue(formState[key])
+  const defaultPrescText = () => {
+    const eye = term.olho || '____'
+    return [
+      '1 — JEJUM VO. (*MANTER*)',
+      `Pós operatório imediato de facoemulsificação com implante de lente intra ocular dobrável em olho ${eye} sem sidel. LIO tópica. Sem sinais de infecção. Paciente segue de Alta, com retorno agendado.`,
+      'Orientado quanto a sinais de alerta e entregue orientações pós operatório e telefone de SOS.',
+      '2 — AFERIÇÃO DE SSVV E ESTADO CLÍNICO GERAL. (*VERIFICAR*)',
+      '3 — AFERIÇÃO (GLICEMIA CAPILAR) COMUNICAR SE MAIOR QUE 200. (*VERIFICAR*)',
+      '4 — HIGIENIZAÇÃO DAS MÃOS A CADA 30 MIN. (*PROMOVER*)',
+      `5 — Fenilefrina colírio 10%: pingar uma gota no olho ${eye}.`,
+      '5 — Diazepan 5 mg CP VO 30 min antes do procedimento.',
+      `6 — Colírio tropicamida 0,1% (uso ocular): 1 gt de 5/5 min no olho ${eye} até o procedimento.`,
+      '7 — Diamox 250 mg: 1 CP VO após a cirurgia.',
+    ].join('\n\n')
+  }
+  const defaultDescOpText = () => {
+    return [
+      'Assepsia/antissepsia + campos estéreis;',
+      'Incisão principal + paracenteses;',
+      'Azul de tripan na câmara anterior para colorir saco capsular;',
+      'Xilocaína diluída com adrenalina na câmara anterior;',
+      'Metilcelulose à 2% na câmara anterior;',
+      'Capsulorrexis;',
+      'Hidrodissécação + hidrodelineação do núcleo;',
+      'Facoemulsificação do núcleo;',
+      'Aspiração de restos corticais;',
+      'Implante de LIO no saco capsular (in the bag);',
+      'Aspiração de viscoelástico + sutura aquosa;',
+      'Cefuroxima na câmara anterior + Vigamox tópico;',
+      'Protetor acrílico.',
+    ].join('\n')
+  }
 
   return (
     <div className="flex flex-col gap-6">
@@ -303,19 +335,13 @@ export function SurgicalDocumentHtml({
           </div>
         </div>
 
-        <div className="mt-4 rounded-xl border border-slate-200 p-4 text-sm text-slate-800 leading-6 space-y-1">
-          <p>1 — JEJUM VO. (*MANTER*)</p>
-          <p>
-            Pós operatório imediato de facoemulsificação com implante de lente intra ocular dobrável em olho <span className="font-semibold">{term.olho || '____'}</span> sem sidel. LIO tópica. Sem sinais de infecção. Paciente segue de Alta, com retorno agendado.
-          </p>
-          <p>Orientado quanto a sinais de alerta e entregue orientações pós operatório e telefone de SOS.</p>
-          <p>2 — AFERIÇÃO DE SSVV E ESTADO CLÍNICO GERAL. (*VERIFICAR*)</p>
-          <p>3 — AFERIÇÃO (GLICEMIA CAPILAR) COMUNICAR SE MAIOR QUE 200. (*VERIFICAR*)</p>
-          <p>4 — HIGIENIZAÇÃO DAS MÃOS A CADA 30 MIN. (*PROMOVER*)</p>
-          <p>5 — Fenilefrina colírio 10%: pingar uma gota no olho <span className="font-semibold">{term.olho || '____'}</span>.</p>
-          <p>5 — Diazepan 5 mg CP VO 30 min antes do procedimento.</p>
-          <p>6 — Colírio tropicamida 0,1% (uso ocular): 1 gt de 5/5 min no olho <span className="font-semibold">{term.olho || '____'}</span> até o procedimento.</p>
-          <p>7 — Diamox 250 mg: 1 CP VO após a cirurgia.</p>
+        <div className="mt-4">
+          <label className="label">Rotina / Prescrição (editável)</label>
+          <textarea
+            className="input min-h-[240px] resize-y"
+            value={getText('presc_rotina_texto') || defaultPrescText()}
+            onChange={e => setText('presc_rotina_texto', e.target.value)}
+          />
         </div>
 
         <div className="mt-4">
@@ -425,20 +451,13 @@ export function SurgicalDocumentHtml({
 
         <div className="mt-4 rounded-xl border border-slate-200 p-4">
           <p className="text-sm font-medium text-slate-800">Descrição da operação</p>
-          <div className="mt-3 text-sm text-slate-800 leading-6 space-y-1">
-            <p>Assepsia/antissepsia + campos estéreis;</p>
-            <p>Incisão principal + paracenteses;</p>
-            <p>Azul de tripan na câmara anterior para colorir saco capsular;</p>
-            <p>Xilocaína diluída com adrenalina na câmara anterior;</p>
-            <p>Metilcelulose à 2% na câmara anterior;</p>
-            <p>Capsulorrexis;</p>
-            <p>Hidrodissécação + hidrodelineação do núcleo;</p>
-            <p>Facoemulsificação do núcleo;</p>
-            <p>Aspiração de restos corticais;</p>
-            <p>Implante de LIO no saco capsular (in the bag);</p>
-            <p>Aspiração de viscoelástico + sutura aquosa;</p>
-            <p>Cefuroxima na câmara anterior + Vigamox tópico;</p>
-            <p>Protetor acrílico.</p>
+          <div className="mt-3">
+            <label className="label">Descrição da operação (editável)</label>
+            <textarea
+              className="input min-h-[220px] resize-y"
+              value={getText('descop_descricao_operacao') || defaultDescOpText()}
+              onChange={e => setText('descop_descricao_operacao', e.target.value)}
+            />
           </div>
           <div className="mt-4">
             <label className="label">Observações adicionais</label>

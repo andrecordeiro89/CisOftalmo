@@ -312,7 +312,7 @@ export async function buildProcessoCirurgicoPdf(input: {
     drawField(page, 'Olho a ser operado', term.olho, margin + col2 + gap, y, col2, fieldH)
     y -= fieldH + 18
 
-    const prescLines = [
+    const defaultPrescText = [
       '1 — JEJUM VO. (*MANTER*)',
       `Pós operatório imediato de facoemulsificação com implante de lente intra ocular dobrável em olho ${term.olho || '____'} sem sidel. LIO tópica. Sem sinais de infecção. Paciente segue de Alta, com retorno agendado.`,
       'Orientado quanto a sinais de alerta e entregue orientações pós operatório e telefone de SOS.',
@@ -323,13 +323,21 @@ export async function buildProcessoCirurgicoPdf(input: {
       '5 — Diazepan 5 mg CP VO 30 min antes do procedimento.',
       `6 — Colírio tropicamida 0,1% (uso ocular): 1 gt de 5/5 min no olho ${term.olho || '____'} até o procedimento.`,
       '7 — Diamox 250 mg: 1 CP VO após a cirurgia.',
-    ]
+    ].join('\n\n')
+
+    const prescText = (str(fs['presc_rotina_texto']) || defaultPrescText).trim()
 
     page.drawRectangle({ x: margin, y: y - 170, width: page.getWidth() - margin * 2, height: 170, borderColor, borderWidth: 1 })
     let ty = y - 16
-    for (const ln of prescLines) {
-      page.drawText(ln, { x: margin + 8, y: ty, size: 9, font, color: textColor, maxWidth: page.getWidth() - margin * 2 - 16, lineHeight: 12 })
-      ty -= ln.length > 80 ? 22 : 14
+    const rawBlocks = prescText.split(/\n{2,}/).map(s => s.trim()).filter(Boolean)
+    for (const block of rawBlocks) {
+      const lines = wrapLines(block, page.getWidth() - margin * 2 - 16, 9)
+      for (const ln of lines) {
+        page.drawText(ln, { x: margin + 8, y: ty, size: 9, font, color: textColor })
+        ty -= 12
+      }
+      ty -= 6
+      if (ty < y - 170 + 10) break
     }
     y -= 186
 
@@ -421,9 +429,7 @@ export async function buildProcessoCirurgicoPdf(input: {
     drawMultilineBox(page, 'Qual?', str(fs['cir_intercorrencia_qual']), margin, y, page.getWidth() - margin * 2, 70)
     y -= 86
 
-    page.drawText('Descrição da operação', { x: margin, y: y - 2, size: 11, font: fontBold, color: textColor })
-    y -= 16
-    const bullets = [
+    const defaultDescOpText = [
       'Assepsia/antissepsia + campos estéreis;',
       'Incisão principal + paracenteses;',
       'Azul de tripan na câmara anterior para colorir saco capsular;',
@@ -437,22 +443,21 @@ export async function buildProcessoCirurgicoPdf(input: {
       'Aspiração de viscoelástico + sutura aquosa;',
       'Cefuroxima na câmara anterior + Vigamox tópico;',
       'Protetor acrílico.',
-    ]
-    let by = y
-    for (const b of bullets) {
-      page.drawText('• ' + b, { x: margin, y: by, size: 8.5, font, color: textColor, maxWidth: page.getWidth() - margin * 2, lineHeight: 11 })
-      by -= 12
-      if (by < 210) break
-    }
-    y = by - 8
+    ].join('\n')
 
-    drawMultilineBox(page, 'Observações adicionais', str(fs['descop_observacoes']), margin, y, page.getWidth() - margin * 2, 95, 9)
+    const descText = (str(fs['descop_descricao_operacao']) || defaultDescOpText).trim()
+    const descH = 130
+    drawMultilineBox(page, 'Descrição da operação', descText, margin, y, page.getWidth() - margin * 2, descH, 8.5)
+    y -= descH + 14
+
+    const obsH = 80
+    drawMultilineBox(page, 'Observações adicionais', str(fs['descop_observacoes']), margin, y, page.getWidth() - margin * 2, obsH, 9)
 
     const gapSig = 10
     const sigW = (page.getWidth() - margin * 2 - gapSig * 2) / 3
-    await drawSignatureBox(page, margin, 140, sigW, 90, 'Carimbo médico (1)', str(fs['descop_carimbo_1']))
-    await drawSignatureBox(page, margin + sigW + gapSig, 140, sigW, 90, 'Carimbo médico (2)', str(fs['descop_carimbo_2']))
-    await drawSignatureBox(page, margin + (sigW + gapSig) * 2, 140, sigW, 90, 'Carimbo médico (3)', str(fs['descop_carimbo_3']))
+    await drawSignatureBox(page, margin, 110, sigW, 90, 'Carimbo médico (1)', str(fs['descop_carimbo_1']))
+    await drawSignatureBox(page, margin + sigW + gapSig, 110, sigW, 90, 'Carimbo médico (2)', str(fs['descop_carimbo_2']))
+    await drawSignatureBox(page, margin + (sigW + gapSig) * 2, 110, sigW, 90, 'Carimbo médico (3)', str(fs['descop_carimbo_3']))
   }
 
   {
