@@ -60,10 +60,6 @@ type ConsentTerm = {
   CIRCULANTE: string
 }
 
-type TemplatePage = { dataUrl: string; width: number; height: number }
-type Box = { page: number; x: number; y: number; w: number; h: number }
-type PdfLayout = { boxes: Record<string, Box> }
-
 const DEFAULT_CHECKLIST: ChecklistSection[] = [
   {
     id: 'antes_anestesia',
@@ -98,29 +94,6 @@ const DEFAULT_CHECKLIST: ChecklistSection[] = [
     ],
   },
 ]
-
-const PDF_TEMPLATE_URL = '/grade/MODELO_TERMO_CONSENTIMENTO.pdf'
-
-const DEFAULT_PDF_LAYOUT: PdfLayout = {
-  boxes: {
-    field_hospital: { page: 1, x: 0.07, y: 0.14, w: 0.50, h: 0.035 },
-    field_paciente: { page: 1, x: 0.07, y: 0.20, w: 0.60, h: 0.035 },
-    field_cpf: { page: 1, x: 0.70, y: 0.20, w: 0.23, h: 0.035 },
-    field_nascimento: { page: 1, x: 0.07, y: 0.255, w: 0.23, h: 0.035 },
-    field_sexo: { page: 1, x: 0.32, y: 0.255, w: 0.18, h: 0.035 },
-    field_medico: { page: 1, x: 0.52, y: 0.255, w: 0.41, h: 0.035 },
-    field_cirurgia: { page: 1, x: 0.07, y: 0.31, w: 0.60, h: 0.035 },
-    field_olho: { page: 1, x: 0.70, y: 0.31, w: 0.23, h: 0.035 },
-    field_data: { page: 1, x: 0.07, y: 0.365, w: 0.23, h: 0.035 },
-    field_hora: { page: 1, x: 0.32, y: 0.365, w: 0.18, h: 0.035 },
-    sig_doctor: { page: 1, x: 0.07, y: 0.74, w: 0.27, h: 0.12 },
-    sig_patient: { page: 1, x: 0.365, y: 0.74, w: 0.27, h: 0.12 },
-    sig_witness: { page: 1, x: 0.66, y: 0.74, w: 0.27, h: 0.12 },
-    rubric_antes_anestesia: { page: 2, x: 0.72, y: 0.20, w: 0.22, h: 0.08 },
-    rubric_antes_incisao: { page: 2, x: 0.72, y: 0.46, w: 0.22, h: 0.08 },
-    rubric_antes_saida: { page: 2, x: 0.72, y: 0.72, w: 0.22, h: 0.08 },
-  },
-}
 
 function isValidCPF(digits: string) {
   if (!/^\d{11}$/.test(digits)) return false
@@ -260,21 +233,6 @@ export function Cirurgico() {
   const [sigWitness, setSigWitness] = useState('')
   const [docChecklist, setDocChecklist] = useState<ChecklistSection[]>(DEFAULT_CHECKLIST)
   const [formState, setFormState] = useState<Record<string, unknown>>({})
-  const [templatePages, setTemplatePages] = useState<TemplatePage[]>([])
-  const [templateLoading, setTemplateLoading] = useState(false)
-  const [layoutEdit, setLayoutEdit] = useState(false)
-  const [pdfLayout, setPdfLayout] = useState<PdfLayout>(DEFAULT_PDF_LAYOUT)
-  const [pageInk, setPageInk] = useState<Record<number, string>>({})
-  const [tool, setTool] = useState<'select' | 'pen'>('select')
-  const [dragging, setDragging] = useState<{
-    id: string
-    page: number
-    startClientX: number
-    startClientY: number
-    startBox: Box
-  } | null>(null)
-  const page1Ref = useRef<HTMLDivElement | null>(null)
-  const page2Ref = useRef<HTMLDivElement | null>(null)
 
   const loadCases = async () => {
     setLoadingList(true)
@@ -398,9 +356,7 @@ export function Cirurgico() {
     doctor: string,
     patient: string,
     witness: string,
-    state: Record<string, unknown>,
-    layout: PdfLayout,
-    ink: Record<number, string>
+    state: Record<string, unknown>
   ) => {
     return {
       surgical_case_id: c.id,
@@ -413,49 +369,6 @@ export function Cirurgico() {
       },
       checklist: toChecklistSave(checklist),
       form_state: state,
-      layout,
-      page_ink: ink,
-    }
-  }
-
-  const ensureTemplateLoaded = async () => {
-    if (templatePages.length > 0) return templatePages
-    if (templateLoading) return []
-    setTemplateLoading(true)
-    try {
-      const pdfjsLib = await import('pdfjs-dist')
-      pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
-        'pdfjs-dist/build/pdf.worker.min.mjs',
-        import.meta.url
-      ).toString()
-
-      const res = await fetch(PDF_TEMPLATE_URL)
-      if (!res.ok) throw new Error('Não foi possível carregar o PDF do modelo.')
-      const buf = await res.arrayBuffer()
-      const pdf = await pdfjsLib.getDocument({ data: buf }).promise
-      const pages: TemplatePage[] = []
-      for (let i = 1; i <= pdf.numPages; i++) {
-        const page = await pdf.getPage(i)
-        const viewport = page.getViewport({ scale: 2 })
-        const canvas = document.createElement('canvas')
-        canvas.width = Math.floor(viewport.width)
-        canvas.height = Math.floor(viewport.height)
-        const ctx = canvas.getContext('2d')
-        if (!ctx) continue
-        await page.render({ canvasContext: ctx as any, viewport }).promise
-        pages.push({
-          dataUrl: canvas.toDataURL('image/jpeg', 0.92),
-          width: canvas.width,
-          height: canvas.height,
-        })
-      }
-      setTemplatePages(pages)
-      return pages
-    } catch (e: any) {
-      toast(e?.message || 'Erro ao carregar o modelo em PDF.', 'error')
-      return []
-    } finally {
-      setTemplateLoading(false)
     }
   }
 
@@ -467,7 +380,7 @@ export function Cirurgico() {
       const defaultsTerm = buildTermDefaults(c)
       const { data, error } = await supabase
         .from('surgical_documents')
-        .select('term, signatures, checklist, form_state, layout, page_ink')
+        .select('term, signatures, checklist, form_state')
         .eq('surgical_case_id', c.id)
         .maybeSingle()
 
@@ -479,8 +392,6 @@ export function Cirurgico() {
         setSigPatient('')
         setSigWitness('')
         setFormState({})
-        setPdfLayout(DEFAULT_PDF_LAYOUT)
-        setPageInk({})
         return
       }
 
@@ -494,10 +405,8 @@ export function Cirurgico() {
             signatures: {},
             checklist: DEFAULT_CHECKLIST,
             form_state: {},
-            layout: DEFAULT_PDF_LAYOUT,
-            page_ink: {},
           }, { onConflict: 'surgical_case_id' })
-          .select('term, signatures, checklist, form_state, layout, page_ink')
+          .select('term, signatures, checklist, form_state')
           .single()
 
         if (upErr) {
@@ -519,27 +428,12 @@ export function Cirurgico() {
         const nextWitness = typeof createdSig?.witness === 'string' ? createdSig.witness : ''
         const nextFormState = (created as any)?.form_state
         setFormState(nextFormState && typeof nextFormState === 'object' ? nextFormState : {})
-        const nextLayoutRaw = (created as any)?.layout
-        const nextLayout: PdfLayout = nextLayoutRaw?.boxes ? { boxes: { ...DEFAULT_PDF_LAYOUT.boxes, ...nextLayoutRaw.boxes } } : DEFAULT_PDF_LAYOUT
-        const nextInkRaw = (created as any)?.page_ink
-        const nextInk: Record<number, string> = (() => {
-          if (!nextInkRaw || typeof nextInkRaw !== 'object') return {}
-          const out: Record<number, string> = {}
-          Object.entries(nextInkRaw as any).forEach(([k, v]) => {
-            const n = Number(k)
-            if (!Number.isFinite(n)) return
-            if (typeof v === 'string') out[n] = v
-          })
-          return out
-        })()
         setDocTerm(nextTerm)
         setDocChecklist(nextChecklist)
         setSigDoctor(nextDoctor)
         setSigPatient(nextPatient)
         setSigWitness(nextWitness)
-        setPdfLayout(nextLayout)
-        setPageInk(nextInk)
-        lastSavedHashRef.current = JSON.stringify(buildDocPayload(c, nextTerm, nextChecklist, nextDoctor, nextPatient, nextWitness, nextFormState && typeof nextFormState === 'object' ? nextFormState : {}, nextLayout, nextInk))
+        lastSavedHashRef.current = JSON.stringify(buildDocPayload(c, nextTerm, nextChecklist, nextDoctor, nextPatient, nextWitness, nextFormState && typeof nextFormState === 'object' ? nextFormState : {}))
         return
       }
 
@@ -552,27 +446,12 @@ export function Cirurgico() {
       const nextWitness = typeof sig?.witness === 'string' ? sig.witness : ''
       const nextFormState = (data as any)?.form_state
       setFormState(nextFormState && typeof nextFormState === 'object' ? nextFormState : {})
-      const layoutRaw = (data as any)?.layout
-      const nextLayout: PdfLayout = layoutRaw?.boxes ? { boxes: { ...DEFAULT_PDF_LAYOUT.boxes, ...layoutRaw.boxes } } : DEFAULT_PDF_LAYOUT
-      const inkRaw = (data as any)?.page_ink
-      const nextInk: Record<number, string> = (() => {
-        if (!inkRaw || typeof inkRaw !== 'object') return {}
-        const out: Record<number, string> = {}
-        Object.entries(inkRaw as any).forEach(([k, v]) => {
-          const n = Number(k)
-          if (!Number.isFinite(n)) return
-          if (typeof v === 'string') out[n] = v
-        })
-        return out
-      })()
       setDocTerm(nextTerm)
       setDocChecklist(nextChecklist)
       setSigDoctor(nextDoctor)
       setSigPatient(nextPatient)
       setSigWitness(nextWitness)
-      setPdfLayout(nextLayout)
-      setPageInk(nextInk)
-      lastSavedHashRef.current = JSON.stringify(buildDocPayload(c, nextTerm, nextChecklist, nextDoctor, nextPatient, nextWitness, nextFormState && typeof nextFormState === 'object' ? nextFormState : {}, nextLayout, nextInk))
+      lastSavedHashRef.current = JSON.stringify(buildDocPayload(c, nextTerm, nextChecklist, nextDoctor, nextPatient, nextWitness, nextFormState && typeof nextFormState === 'object' ? nextFormState : {}))
     } finally {
       setDocLoading(false)
     }
@@ -583,7 +462,7 @@ export function Cirurgico() {
     if (docSaving) return false
     setDocSaving(true)
     try {
-      const payload = buildDocPayload(docCase, docTerm, docChecklist, sigDoctor, sigPatient, sigWitness, formState, pdfLayout, pageInk)
+      const payload = buildDocPayload(docCase, docTerm, docChecklist, sigDoctor, sigPatient, sigWitness, formState)
       const { error } = await supabase.from('surgical_documents').upsert(payload, { onConflict: 'surgical_case_id' })
 
       if (error) {
@@ -600,7 +479,7 @@ export function Cirurgico() {
 
   useEffect(() => {
     if (!docOpen || docLoading || !docCase) return
-    const payload = buildDocPayload(docCase, docTerm, docChecklist, sigDoctor, sigPatient, sigWitness, formState, pdfLayout, pageInk)
+    const payload = buildDocPayload(docCase, docTerm, docChecklist, sigDoctor, sigPatient, sigWitness, formState)
     const hash = JSON.stringify(payload)
     if (hash === lastSavedHashRef.current) return
     if (autoSaveTimerRef.current) window.clearTimeout(autoSaveTimerRef.current)
@@ -620,111 +499,7 @@ export function Cirurgico() {
     return () => {
       if (autoSaveTimerRef.current) window.clearTimeout(autoSaveTimerRef.current)
     }
-  }, [docOpen, docLoading, docCase, docTerm, docChecklist, sigDoctor, sigPatient, sigWitness, formState, pdfLayout, pageInk])
-
-  useEffect(() => {
-    if (templatePages.length < 2) return
-    setPdfLayout(prev => {
-      const next = { boxes: { ...prev.boxes } }
-      const allItems = DEFAULT_CHECKLIST.flatMap(s => s.items.map(i => ({ sectionId: s.id, itemId: i.id })))
-      const yStart = { antes_anestesia: 0.12, antes_incisao: 0.38, antes_saida: 0.64 } as Record<string, number>
-      const ySpan = 0.20
-      const x = 0.07
-      const w = 0.03
-      const h = 0.03
-      const counts: Record<string, number> = {}
-      allItems.forEach(({ sectionId }) => { counts[sectionId] = (counts[sectionId] || 0) + 1 })
-      const idxs: Record<string, number> = {}
-      allItems.forEach(({ sectionId, itemId }) => {
-        const id = `cb_${sectionId}_${itemId}`
-        if (next.boxes[id]) return
-        const i = idxs[sectionId] || 0
-        idxs[sectionId] = i + 1
-        const denom = Math.max(1, (counts[sectionId] || 1))
-        const y = (yStart[sectionId] ?? 0.12) + (ySpan * (i / denom))
-        next.boxes[id] = { page: 2, x, y, w, h }
-      })
-      return next
-    })
-  }, [templatePages.length])
-
-  useEffect(() => {
-    if (!dragging) return
-    const onMove = (e: PointerEvent) => {
-      const pageEl = dragging.page === 1 ? page1Ref.current : page2Ref.current
-      if (!pageEl) return
-      const rect = pageEl.getBoundingClientRect()
-      const dx = (e.clientX - dragging.startClientX) / rect.width
-      const dy = (e.clientY - dragging.startClientY) / rect.height
-      setPdfLayout(prev => {
-        const cur = prev.boxes[dragging.id]
-        if (!cur) return prev
-        const nextBox = {
-          ...cur,
-          x: Math.min(0.98, Math.max(0.0, dragging.startBox.x + dx)),
-          y: Math.min(0.98, Math.max(0.0, dragging.startBox.y + dy)),
-        }
-        return { boxes: { ...prev.boxes, [dragging.id]: nextBox } }
-      })
-    }
-    const onUp = () => setDragging(null)
-    window.addEventListener('pointermove', onMove)
-    window.addEventListener('pointerup', onUp)
-    window.addEventListener('pointercancel', onUp)
-    return () => {
-      window.removeEventListener('pointermove', onMove)
-      window.removeEventListener('pointerup', onUp)
-      window.removeEventListener('pointercancel', onUp)
-    }
-  }, [dragging])
-
-  const loadImage = (src: string) => {
-    return new Promise<HTMLImageElement>((resolve, reject) => {
-      const img = new Image()
-      img.onload = () => resolve(img)
-      img.onerror = () => reject(new Error('Erro ao carregar imagem.'))
-      img.src = src
-    })
-  }
-
-  const drawDataUrl = async (ctx: CanvasRenderingContext2D, dataUrl: string, x: number, y: number, w: number, h: number) => {
-    if (!dataUrl) return
-    const img = await loadImage(dataUrl)
-    ctx.drawImage(img, x, y, w, h)
-  }
-
-  const drawTextInBox = (ctx: CanvasRenderingContext2D, text: string, x: number, y: number, w: number, h: number) => {
-    const t = (text || '').trim()
-    if (!t) return
-    const pad = Math.max(2, Math.floor(w * 0.02))
-    const innerW = Math.max(1, w - pad * 2)
-    const fontBase = Math.max(10, Math.floor(h * 0.65))
-    ctx.fillStyle = '#0f172a'
-    ctx.textBaseline = 'middle'
-    ctx.textAlign = 'left'
-
-    let fontSize = fontBase
-    const setFont = (size: number) => {
-      ctx.font = `${size}px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial`
-    }
-    setFont(fontSize)
-
-    const fit = (s: string) => {
-      let out = s
-      while (out.length > 0 && ctx.measureText(out).width > innerW) {
-        out = out.slice(0, -1)
-      }
-      return out
-    }
-
-    while (fontSize > 9 && ctx.measureText(t).width > innerW) {
-      fontSize -= 1
-      setFont(fontSize)
-    }
-
-    const finalText = ctx.measureText(t).width <= innerW ? t : fit(t) + '…'
-    ctx.fillText(finalText, x + pad, y + h / 2)
-  }
+  }, [docOpen, docLoading, docCase, docTerm, docChecklist, sigDoctor, sigPatient, sigWitness, formState])
 
   const printPdf = async () => {
     const ok = await saveDocument()
@@ -826,87 +601,93 @@ export function Cirurgico() {
           </style>
         </head>
         <body>
-          <h1>Termo de consentimento e entendimento pré-cirúrgico</h1>
-          <div class="grid">
-            <div class="box"><p class="k">Hospital</p><p class="v">${escapeHtml(docTerm.hospital || '')}</p></div>
-            <div class="box"><p class="k">Data</p><p class="v">${escapeHtml(docTerm.data || '')}</p></div>
-            <div class="box"><p class="k">Paciente</p><p class="v">${escapeHtml(docTerm.nome || '')}</p></div>
-            <div class="box"><p class="k">CPF</p><p class="v">${escapeHtml(docTerm.cpf || '')}</p></div>
-            <div class="box"><p class="k">Nascimento</p><p class="v">${escapeHtml(docTerm.data_nascimento || '')}</p></div>
-            <div class="box"><p class="k">Sexo</p><p class="v">${escapeHtml(docTerm.sexo || '')}</p></div>
-            <div class="box"><p class="k">Médico</p><p class="v">${escapeHtml(docTerm.medico || '')}</p></div>
-            <div class="box"><p class="k">Cirurgia</p><p class="v">${escapeHtml(docTerm.cirurgia || '')}</p></div>
-            <div class="box"><p class="k">Olho</p><p class="v">${escapeHtml(docTerm.olho || '')}</p></div>
-            <div class="box"><p class="k">Hora</p><p class="v">${escapeHtml(docTerm.hora || '')}</p></div>
-          </div>
-          <p>Eu, ${escapeHtml(docTerm.nome || '')}, portador do CPF ${escapeHtml(docTerm.cpf || '')}, D/N ${escapeHtml(docTerm.data_nascimento || '')}, aceito voluntária e plenamente o tratamento médico cirúrgico proposto e solicitado pelo ${escapeHtml(docTerm.medico || '')} e sua equipe, para tratar da minha saúde atual conforme julgarem necessário, em procedimento cirúrgico a ser realizado no ${escapeHtml(docTerm.hospital || '')} no dia ${escapeHtml(docTerm.data || '')}.</p>
-          <p>Tenho pleno conhecimento e estou ciente que o procedimento cirúrgico foi planejado especificamente para o meu caso e eu, de maneira voluntária, consinto e autorizo sua realização, sendo este procedimento facoemulsificação com implante de lente intraocular em olho ${escapeHtml(docTerm.olho || '')}.</p>
-          <p>As lentes intraoculares usadas nas cirurgias do Sistema Único de Saúde são de fabricação nacional e de formato esférico, não havendo a possibilidade de substituição das mesmas.</p>
+          <h1>TERMO DE CONSENTIMENTO E ENTENDIMENTO PRÉ-CIRÚRGICO</h1>
+          <p>Eu, <b>${escapeHtml(docTerm.nome || '')}</b>, portador do <b>${escapeHtml(docTerm.cpf || '')}</b>, <b>${escapeHtml(docTerm.data_nascimento || '')}</b>, aceito voluntária e plenamente o tratamento médico cirúrgico proposto e solicitado pelo <b>${escapeHtml(docTerm.medico || '')}</b>, e sua equipe, para tratar da minha saúde atual conforme julgarem necessário, em procedimento cirúrgico a ser realizado no <b>${escapeHtml(docTerm.hospital || '')}</b> no dia <b>${escapeHtml(docTerm.data || '')}</b>.</p>
+          <p>Tenho pleno conhecimento e estou ciente de que o procedimento cirúrgico foi planejado especificamente para o meu caso e, de maneira voluntária, consinto e autorizo sua realização, sendo este procedimento <b>${escapeHtml(docTerm.cirurgia || '')}</b> em <b>${escapeHtml(docTerm.olho || '')}</b>.</p>
+          <p>Entendo que meu médico possa encontrar diferentes condições que requeiram um procedimento adicional ou até mesmo diferente do planejado, portanto, autorizo sua realização na medida que julgarem necessária, deste novo e/ou adicional procedimento.</p>
+          <p>Declaro estar ciente de que a lente intraocular disponibilizada pelo Sistema Único de Saúde (SUS) possui finalidade exclusiva de tratamento da catarata, sendo uma lente monofocal, não destinada à correção completa de erros refrativos, podendo haver necessidade de uso de óculos após o procedimento.</p>
           <div class="grid" style="margin-top:12px;">
-            <div>
-              <div class="k" style="margin-bottom:6px;">Assinatura do paciente</div>
-              <div class="sig">${img(sigPatient)}</div>
-            </div>
-            <div>
-              <div class="k" style="margin-bottom:6px;">Assinatura da testemunha</div>
-              <div class="sig">${img(sigWitness)}</div>
-            </div>
+            <div><div class="k" style="margin-bottom:6px;">PACIENTE</div><div class="sig">${img(sigPatient)}</div></div>
+            <div><div class="k" style="margin-bottom:6px;">TESTEMUNHA</div><div class="sig">${img(sigWitness)}</div></div>
           </div>
-          <div style="margin-top:12px;">
-            <div class="k" style="margin-bottom:6px;">Carimbo/assinatura do médico</div>
-            <div class="sig">${img(sigDoctor)}</div>
+          <div style="margin-top:12px;"><div class="k" style="margin-bottom:6px;">CARIMBO MÉDICO</div><div class="sig">${img(sigDoctor)}</div></div>
+
+          <div class="pagebreak"></div>
+          <h2>FICHA DE TRIAGEM PRÉ CIRÚRGICA (FACOEMULCIFICAÇÃO)</h2>
+          <p><b>Paciente:</b> ${escapeHtml(docTerm.nome || '')} &nbsp; <b>Data:</b> ${escapeHtml(docTerm.data || '')}</p>
+          <p><b>PA:</b> ${escapeHtml(tx('triagem_pa'))} &nbsp; <b>Hora:</b> ${escapeHtml(tx('triagem_hora'))} &nbsp; <b>HGT:</b> ${escapeHtml(tx('triagem_hgt'))}</p>
+          <p><b>Alergias:</b> ${escapeHtml(yn('triagem_alergias'))} &nbsp; <b>A que:</b> ${escapeHtml(tx('triagem_alergias_que'))}</p>
+          <p>${ck('triagem_jejum_ok')} Paciente confirmou jejum e estar acompanhado de um maior de idade que se responsabiliza pelo pós-operatório.</p>
+          <p><b>Patologias:</b> HAS ${escapeHtml(yn('triagem_has'))} · DM ${escapeHtml(yn('triagem_dm'))} · Disfunção cardíaca ${escapeHtml(yn('triagem_cardio'))} · Anti-coagulante ${escapeHtml(yn('triagem_anticoag'))}</p>
+          <p><b>Outras:</b> ${escapeHtml(tx('triagem_outras'))}</p>
+          <div style="margin-top:12px;"><div class="k" style="margin-bottom:6px;">ASSINATURA DO AVALIADOR</div><div class="sig">${img(tx('triagem_assinatura_avaliador'))}</div></div>
+
+          <div class="pagebreak"></div>
+          <h2>PRESCRIÇÃO MÉDICA / ASSINATURA — RELATÓRIO MÉDICO</h2>
+          <p><b>Paciente:</b> ${escapeHtml(docTerm.nome || '')} &nbsp; <b>CPF:</b> ${escapeHtml(docTerm.cpf || '')} &nbsp; <b>Nascimento:</b> ${escapeHtml(docTerm.data_nascimento || '')}</p>
+          <p><b>Data cirurgia:</b> ${escapeHtml(docTerm.data || '')} &nbsp; <b>Olho:</b> ${escapeHtml(docTerm.olho || '')}</p>
+          <p>1 — JEJUM VO. (*MANTER*)</p>
+          <p>Pós operatório imediato de facoemulsificação com implante de lente intra ocular dobrável em olho ${escapeHtml(docTerm.olho || '')} sem sidel. LIO tópica. Sem sinais de infecção. Paciente segue de Alta, com retorno agendado.</p>
+          <p>2 — AFERIÇÃO DE SSVV E ESTADO CLÍNICO GERAL. (*VERIFICAR*)</p>
+          <p>3 — AFERIÇÃO (GLICEMIA CAPILAR) COMUNICAR SE MAIOR QUE 200. (*VERIFICAR*)</p>
+          <p>4 — HIGIENIZAÇÃO DAS MÃOS A CADA 30 MIN. (*PROMOVER*)</p>
+          <p>5 — Fenilefrina colírio 10% - pingar uma gota no olho ${escapeHtml(docTerm.olho || '')}.</p>
+          <p>5 — Diazepan 5 MG CP VO 30 MIN ANTES PROCEDIMENTO.</p>
+          <p>6 — Colírio tropicamida 0,1% 1gt de 5/5 min no olho ${escapeHtml(docTerm.olho || '')} até o procedimento.</p>
+          <p>7 — Diamox 250MG 1CP VO após a cirurgia.</p>
+          <p><b>Evolução clínica:</b> ${escapeHtml(tx('presc_evolucao'))}</p>
+          <div class="grid" style="margin-top:12px;">
+            <div><div class="k" style="margin-bottom:6px;">Carimbo do médico (1)</div><div class="sig">${img(tx('presc_carimbo_1'))}</div></div>
+            <div><div class="k" style="margin-bottom:6px;">Carimbo do médico (2)</div><div class="sig">${img(tx('presc_carimbo_2'))}</div></div>
           </div>
 
           <div class="pagebreak"></div>
-          <h2>Observações intra-operatórias</h2>
-          <p><b>Paciente durante cirurgia:</b> ${ck('intraop_colaborativo')} Colaborativo &nbsp; ${ck('intraop_nao_colaborativo')} Não colaborativo &nbsp; ${ck('intraop_dor')} Reclamou de dor</p>
-          <p><b>Outra queixa:</b> ${escapeHtml(tx('intraop_outra_queixa'))}</p>
-          <p><b>Intercorrência:</b> ${escapeHtml(yn('intraop_intercorrencia'))}</p>
-          <p><b>Descrição:</b> ${escapeHtml(tx('intraop_intercorrencia_desc'))}</p>
-
-          <div class="pagebreak"></div>
-          <h2>Checklist de cirurgia segura — cirurgia de catarata</h2>
+          <h2>CHECKLIST DE CIRURGIA SEGURA — CIRURGIA DE CATARATA</h2>
+          <p><b>Paciente:</b> ${escapeHtml(docTerm.nome || '')} &nbsp; <b>Data:</b> ${escapeHtml(docTerm.data || '')} &nbsp; <b>Olho:</b> ${escapeHtml(docTerm.olho || '')}</p>
           ${safetyHtml}
+          <div class="grid" style="margin-top:12px;">
+            <div><div class="k" style="margin-bottom:6px;">Assinatura — médico</div><div class="sig">${img(tx('checklist_sig_medico'))}</div></div>
+            <div><div class="k" style="margin-bottom:6px;">Assinatura — circulante</div><div class="sig">${img(tx('checklist_sig_circulante'))}</div></div>
+          </div>
 
           <div class="pagebreak"></div>
-          <h2>Evolução pós-op</h2>
-          <p><b>Data:</b> ${escapeHtml(tx('posop_data'))} &nbsp; <b>Olho:</b> ${ck('posop_od')} Direito ${ck('posop_oe')} Esquerdo</p>
-          <p><b>AV SC:</b> OD ${escapeHtml(tx('posop_av_od'))} &nbsp; OE ${escapeHtml(tx('posop_av_oe'))}</p>
-          <p><b>Queixas:</b> ${ck('posop_queixa_nenhuma')} Nenhuma ${ck('posop_queixa_lacrimejamento')} Lacrimejamento ${ck('posop_queixa_ardencia')} Ardência ${ck('posop_queixa_dor')} Dor</p>
-          <p>${ck('posop_queixa_embacado_perto')} Embaçado perto ${ck('posop_queixa_embacado_longe')} Embaçado longe &nbsp; <b>Outra:</b> ${escapeHtml(tx('posop_queixa_outra'))}</p>
-          <p><b>Usou medicação correta?</b> ${ck('posop_med_sim')} Sim ${ck('posop_med_nao')} Não ${ck('posop_med_parcial')} Parcial</p>
-          <p><b>Repouso correto?</b> ${ck('posop_rep_sim')} Sim ${ck('posop_rep_nao')} Não ${ck('posop_rep_parcial')} Parcial</p>
-          <p><b>Observações:</b> ${escapeHtml(tx('posop_observacoes'))}</p>
-
-          <div class="pagebreak"></div>
-          <h2>Descrição da operação</h2>
-          <p>Assepsia/antissepsia + campos estéreis; incisão principal + paracenteses; azul de tripan; xilocaína com adrenalina; metilcelulose 2%; capsulorrexis; hidrodissécação/hidrodelineação; facoemulsificação; aspiração de restos corticais; implante de LIO; aspiração de viscoelástico + sutura aquosa; cefuroxima na câmara anterior + Vigamox tópico; protetor acrílico.</p>
+          <h2>REGISTRO CIRÚRGICO</h2>
+          <p><b>Paciente:</b> ${escapeHtml(docTerm.nome || '')} &nbsp; <b>Nascimento:</b> ${escapeHtml(docTerm.data_nascimento || '')} &nbsp; <b>CPF:</b> ${escapeHtml(docTerm.cpf || '')}</p>
+          <p><b>Data:</b> ${escapeHtml(docTerm.data || '')} &nbsp; <b>Operador:</b> ${escapeHtml(docTerm.medico || '')}</p>
+          <p><b>Instrumentador:</b> ${escapeHtml(docTerm.INSTRUMENTADOR || '')} &nbsp; <b>Anestesista:</b> ${escapeHtml(tx('cir_anestesista'))}</p>
+          <p><b>Tipo anestesia:</b> ${escapeHtml(docTerm.ANESTESIA || '')} &nbsp; <b>Olho:</b> ${escapeHtml(docTerm.olho || '')}</p>
+          <p><b>Etiqueta LIO:</b> ${escapeHtml(tx('cir_etiqueta_lio'))}</p>
+          <p><b>Diagnóstico pré:</b> Catarata &nbsp; <b>Tipo de operação:</b> ${escapeHtml(docTerm.cirurgia || '')} &nbsp; <b>Diagnóstico pós:</b> Pseudofacia</p>
+          <p><b>Intercorrências:</b> ${ck('cir_intercorrencia_nao')} Não ${ck('cir_intercorrencia_sim')} Sim &nbsp; <b>Qual:</b> ${escapeHtml(tx('cir_intercorrencia_qual'))}</p>
+          <p><b>Descrição da operação:</b> Assepsia/antissepsia + campos estéreis; incisão principal + paracenteses; azul de tripan; xilocaína com adrenalina; metilcelulose 2%; capsulorrexis; hidrodissécação/hidrodelineação; facoemulsificação; aspiração de restos corticais; implante de LIO; aspiração de viscoelástico + sutura aquosa; cefuroxima + Vigamox; protetor acrílico.</p>
           <p><b>Observações adicionais:</b> ${escapeHtml(tx('descop_observacoes'))}</p>
           <div class="grid" style="margin-top:12px;">
-            <div><div class="k" style="margin-bottom:6px;">Carimbo/assinatura do médico (1)</div><div class="sig">${img(tx('descop_carimbo_1'))}</div></div>
-            <div><div class="k" style="margin-bottom:6px;">Carimbo/assinatura do médico (2)</div><div class="sig">${img(tx('descop_carimbo_2'))}</div></div>
+            <div><div class="k" style="margin-bottom:6px;">Carimbo médico (1)</div><div class="sig">${img(tx('descop_carimbo_1'))}</div></div>
+            <div><div class="k" style="margin-bottom:6px;">Carimbo médico (2)</div><div class="sig">${img(tx('descop_carimbo_2'))}</div></div>
           </div>
-          <div style="margin-top:12px;">
-            <div class="k" style="margin-bottom:6px;">Carimbo/assinatura do médico (3)</div>
-            <div class="sig">${img(tx('descop_carimbo_3'))}</div>
-          </div>
+          <div style="margin-top:12px;"><div class="k" style="margin-bottom:6px;">Carimbo médico (3)</div><div class="sig">${img(tx('descop_carimbo_3'))}</div></div>
 
           <div class="pagebreak"></div>
-          <h2>Prescrição médica / relatório</h2>
-          <p>Jejum VO; aferição de SSVV; glicemia capilar (comunicar se &gt; 200); higienização das mãos; fenilefrina 10% no olho ${escapeHtml(docTerm.olho || '')}; diazepam 5 mg VO; tropicamida 0,1% no olho ${escapeHtml(docTerm.olho || '')}; diamox 250 mg após cirurgia.</p>
-          <p><b>Evolução clínica:</b> ${escapeHtml(tx('presc_evolucao'))}</p>
-          <div style="margin-top:12px;">
-            <div class="k" style="margin-bottom:6px;">Carimbo/assinatura do médico</div>
-            <div class="sig">${img(tx('presc_carimbo'))}</div>
-          </div>
-
-          <div class="pagebreak"></div>
-          <h2>Relatório de enfermagem — intraoperatório</h2>
-          <p><b>Início:</b> ${escapeHtml(tx('enf_inicio'))} &nbsp; <b>Término:</b> ${escapeHtml(tx('enf_termino'))}</p>
+          <h2>RELATÓRIO DE ENFERMAGEM — INTRAOPERATÓRIO</h2>
+          <p><b>Início:</b> ${escapeHtml(tx('enf_inicio'))} &nbsp; <b>Término:</b> ${escapeHtml(tx('enf_termino'))} &nbsp; <b>Sexo:</b> ${escapeHtml(tx('enf_sexo') || docTerm.sexo || '')}</p>
           <p><b>Instrumentador:</b> ${escapeHtml(docTerm.INSTRUMENTADOR || '')} &nbsp; <b>Circulante:</b> ${escapeHtml(docTerm.CIRCULANTE || '')}</p>
-          <p><b>Tipo de anestesia:</b> ${escapeHtml(docTerm.ANESTESIA || '')} &nbsp; ${ck('enf_sedacao_realizada')} Sedação realizada</p>
+          <p><b>Tipo anestesia:</b> ${escapeHtml(docTerm.ANESTESIA || '')} &nbsp; ${ck('enf_sedacao_realizada')} Sedação</p>
+          <p><b>Olho operado:</b> ${escapeHtml(docTerm.olho || '')} &nbsp; <b>Etiqueta LIO:</b> ${escapeHtml(tx('enf_etiqueta_lio'))}</p>
           <p><b>Técnica:</b> ${ck('enf_tecnica_faco')} Facoemulsificação ${ck('enf_tecnica_eec')} EEC &nbsp; <b>Outro:</b> ${escapeHtml(tx('enf_tecnica_outro'))}</p>
-          <p><b>Anotações:</b> ${escapeHtml(tx('enf_anotacoes'))}</p>
+          <p><b>Medicamentos:</b> ${ck('enf_med_carbacol')} Carbacol ${ck('enf_med_azul_tripan')} Azul de Tripan &nbsp; <b>Outro:</b> ${escapeHtml(tx('enf_med_outro'))}</p>
+          <p><b>ATB intracamaral:</b> ${ck('enf_atb_cefuroxima')} Cefuroxima &nbsp; <b>Outro:</b> ${escapeHtml(tx('enf_atb_outro'))}</p>
+          <p><b>Intercorrências:</b> ${ck('enf_intercorrencia_nao')} Não houve ${ck('enf_intercorrencia_sim')} Sim &nbsp; <b>Descrever:</b> ${escapeHtml(tx('enf_intercorrencia_desc'))}</p>
+          <p><b>Finalização:</b> Contagem ${escapeHtml(yn('enf_final_contagem'))} · Integridade LIO ${escapeHtml(yn('enf_final_integridade_lio'))} · Curativo ${escapeHtml(yn('enf_final_curativo'))} · Encaminhado ${escapeHtml(yn('enf_final_encaminhado'))}</p>
+          <p><b>Condição saída:</b> ${ck('enf_saida_estavel')} Estável ${ck('enf_saida_sonolento')} Sonolento &nbsp; <b>Outras:</b> ${escapeHtml(tx('enf_saida_outras'))}</p>
+          <div style="margin-top:12px;"><div class="k" style="margin-bottom:6px;">Carimbo/assinatura — circulante</div><div class="sig">${img(tx('enf_carimbo_circulante'))}</div></div>
+
+          <div class="pagebreak"></div>
+          <h2>FOLHA DE RASTREABILIDADE E CONTROLE DE ESTERELIZAÇÃO</h2>
+          <p><b>Paciente:</b> ${escapeHtml(docTerm.nome || '')} &nbsp; <b>Data:</b> ${escapeHtml(docTerm.data || '')} &nbsp; <b>Olho:</b> ${escapeHtml(docTerm.olho || '')}</p>
+          <p><b>Caixa cirúrgica:</b> ${escapeHtml(tx('ester_caixa'))}</p>
+          <p><b>Etiqueta identificação caixa cirúrgica:</b> ${escapeHtml(tx('ester_etiqueta'))}</p>
+          <p>${ck('ester_integrador_5')} Integrador químico classe 5 presente/ok</p>
+          <div style="margin-top:12px;"><div class="k" style="margin-bottom:6px;">Carimbo circulante</div><div class="sig">${img(tx('ester_carimbo_circulante'))}</div></div>
         </body>
       </html>
     `
@@ -921,59 +702,6 @@ export function Cirurgico() {
     w.document.close()
     w.focus()
     setTimeout(() => w.print(), 350)
-  }
-
-  const boxStyle = (box: Box) => {
-    return {
-      left: `${box.x * 100}%`,
-      top: `${box.y * 100}%`,
-      width: `${box.w * 100}%`,
-      height: `${box.h * 100}%`,
-    } as any
-  }
-
-  const startDrag = (id: string, e: any) => {
-    if (!layoutEdit) return
-    const box = pdfLayout.boxes[id]
-    if (!box) return
-    e.preventDefault?.()
-    setDragging({
-      id,
-      page: box.page,
-      startClientX: e.clientX,
-      startClientY: e.clientY,
-      startBox: box,
-    })
-  }
-
-  const toggleCheckbox = (sectionId: string, itemId: string) => {
-    setDocChecklist(list => list.map(s => {
-      if (s.id !== sectionId) return s
-      return {
-        ...s,
-        items: s.items.map(it => (it.id === itemId ? { ...it, checked: !it.checked } : it)),
-      }
-    }))
-  }
-
-  const renderField = (fieldId: string, value: string, onChange: (v: string) => void, placeholder?: string) => {
-    const b = pdfLayout.boxes[fieldId]
-    if (!b) return null
-    return (
-      <div
-        className={`absolute ${layoutEdit ? 'border-2 border-brand-500/60 bg-white/30' : ''}`}
-        style={boxStyle(b)}
-        onPointerDown={(e) => startDrag(fieldId, e)}
-      >
-        <input
-          className="w-full h-full bg-transparent px-1 text-[12px] sm:text-[13px] font-medium text-slate-900 outline-none"
-          value={value}
-          placeholder={placeholder}
-          onChange={(e) => onChange(e.target.value)}
-          disabled={layoutEdit}
-        />
-      </div>
-    )
   }
 
   const markPresence = async (c: SurgicalCaseRow) => {
@@ -1781,9 +1509,6 @@ export function Cirurgico() {
           if (!o) {
             setDocCase(null)
             setFormState({})
-            setLayoutEdit(false)
-            setDragging(null)
-            setTool('select')
           }
         }}
       >
